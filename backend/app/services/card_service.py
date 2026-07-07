@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.account import Account, AccountType
 from app.models.transaction import Transaction, TransactionType
 from app.services.balance_service import BalanceService, ZERO
-from app.services.date_utils import billing_cycle_bounds, end_of_day_exclusive
+from app.services.date_utils import billing_cycle_utc_bounds, current_app_date
 
 
 class CardService:
@@ -16,7 +16,7 @@ class CardService:
         self.balance_service = BalanceService(db)
 
     def list_credit_card_exposure(self, as_of: date | None = None) -> list[dict[str, object]]:
-        calculation_date = as_of or date.today()
+        calculation_date = as_of or current_app_date()
         cards = self.db.scalars(
             select(Account)
             .where(Account.account_type == AccountType.CREDIT_CARD, Account.is_active.is_(True))
@@ -48,9 +48,7 @@ class CardService:
         if card.billing_day is None:
             return ZERO
 
-        cycle_start, _cycle_end = billing_cycle_bounds(card.billing_day, as_of)
-        start_dt = datetime.combine(cycle_start, time.min)
-        end_dt = end_of_day_exclusive(as_of)
+        start_dt, end_dt = billing_cycle_utc_bounds(card.billing_day, as_of)
         statement = select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.source_account_id == card.id,
             Transaction.transaction_type == TransactionType.EXPENSE,

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.account import Account, AccountType
 from app.models.transaction import Transaction, TransactionType
-from app.services.date_utils import end_of_day_exclusive
+from app.services.date_utils import app_date_end_exclusive_utc_naive
 
 
 ZERO = Decimal("0")
@@ -76,6 +76,6 @@ class BalanceService:
     def _sum_transactions(self, *criteria: object, as_of: date | None = None) -> Decimal:
         statement = select(func.coalesce(func.sum(Transaction.amount), 0)).where(*criteria)
         if as_of is not None:
-            statement = statement.where(Transaction.occurred_at < end_of_day_exclusive(as_of))
+            statement = statement.where(Transaction.occurred_at < app_date_end_exclusive_utc_naive(as_of))
         result = self.db.scalar(statement)
         return Decimal(result or ZERO)

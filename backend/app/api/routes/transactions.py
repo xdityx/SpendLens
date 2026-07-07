@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
@@ -11,19 +11,11 @@ from app.models.account import AccountType
 from app.models.commitment import CommitmentType, RecurringCommitment
 from app.models.transaction import Transaction, TransactionType
 from app.schemas.transaction import TransactionCreate, TransactionRead
+from app.services import date_utils
 
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
-
-def _utc_naive(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _now_utc_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _validate_commitment_link(payload: TransactionCreate, commitment: RecurringCommitment) -> None:
@@ -79,11 +71,6 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
     if payload.recurring_commitment_id is not None:
         linked_commitment = get_commitment_or_404(db, payload.recurring_commitment_id)
 
-    if payload.occurred_at is not None and _utc_naive(payload.occurred_at) > _now_utc_naive():
-        raise HTTPException(
-            status_code=422,
-            detail="Transactions cannot be future-dated",
-        )
 
     if payload.transaction_type == TransactionType.TRANSFER and source_account is not None:
         if source_account.account_type == AccountType.CREDIT_CARD:
@@ -102,10 +89,16 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
     if linked_commitment is not None:
         _validate_commitment_link(payload, linked_commitment)
 
-    if data["occurred_at"] is None:
-        data["occurred_at"] = _now_utc_naive()
+    if payload.occurred_at is None:
+        data["occurred_at"] = date_utils.utc_now_naive()
     else:
-        data["occurred_at"] = _utc_naive(data["occurred_at"])
+        occurred_at = date_utils.normalize_transaction_datetime(payload.occurred_at)
+        if occurred_at > date_utils.utc_now_naive():
+            raise HTTPException(
+                status_code=422,
+                detail="Transactions cannot be future-dated",
+            )
+        data["occurred_at"] = occurred_at
 
     transaction = Transaction(**data)
     db.add(transaction)
@@ -136,9 +129,9 @@ def list_transactions(
     if category_id is not None:
         statement = statement.where(Transaction.category_id == category_id)
     if date_from is not None:
-        statement = statement.where(Transaction.occurred_at >= datetime.combine(date_from, time.min))
+        statement = statement.where(Transaction.occurred_at >= date_utils.app_date_start_utc_naive(date_from))
     if date_to is not None:
-        statement = statement.where(Transaction.occurred_at < datetime.combine(date_to + timedelta(days=1), time.min))
+        statement = statement.where(Transaction.occurred_at < date_utils.app_date_end_exclusive_utc_naive(date_to))
 
     statement = statement.order_by(Transaction.occurred_at.desc(), Transaction.created_at.desc())
     return list(db.scalars(statement).all())

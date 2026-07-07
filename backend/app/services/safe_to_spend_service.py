@@ -8,7 +8,7 @@ from app.models.commitment import CommitmentType, RecurringCommitment
 from app.models.financial_profile import FinancialProfile
 from app.models.transaction import Transaction, TransactionType
 from app.services.balance_service import BalanceService, ZERO
-from app.services.date_utils import current_month_bounds
+from app.services.date_utils import current_app_date, current_month_utc_bounds
 
 
 class SafeToSpendService:
@@ -17,7 +17,7 @@ class SafeToSpendService:
         self.balance_service = BalanceService(db)
 
     def summary(self, as_of: date | None = None) -> dict[str, Decimal | str]:
-        calculation_date = as_of or date.today()
+        calculation_date = as_of or current_app_date()
         profile = self._financial_profile()
         monthly_savings_target = Decimal(profile.monthly_savings_target) if profile else ZERO
         savings_completed = self._investment_transactions_this_month(calculation_date)
@@ -47,7 +47,7 @@ class SafeToSpendService:
         return self.db.scalars(select(FinancialProfile).order_by(FinancialProfile.created_at).limit(1)).first()
 
     def _investment_transactions_this_month(self, as_of: date) -> Decimal:
-        start_dt, end_dt = current_month_bounds(as_of)
+        start_dt, end_dt = current_month_utc_bounds(as_of)
         result = self.db.scalar(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.transaction_type == TransactionType.INVESTMENT,
@@ -58,7 +58,7 @@ class SafeToSpendService:
         return Decimal(result or ZERO)
 
     def _remaining_fixed_commitments(self, as_of: date) -> Decimal:
-        start_dt, end_dt = current_month_bounds(as_of)
+        start_dt, end_dt = current_month_utc_bounds(as_of)
         fulfilled_ids = set(
             self.db.scalars(
                 select(Transaction.recurring_commitment_id).where(

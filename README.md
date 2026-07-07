@@ -54,6 +54,7 @@ Root `.env` for FastAPI:
 ```text
 DATABASE_URL=postgresql+psycopg://spendlens:spendlens@localhost:5432/spendlens
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+APP_TIMEZONE=Asia/Kolkata
 ```
 
 Frontend `.env.local`:
@@ -63,6 +64,14 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 `NEXT_PUBLIC_API_BASE_URL` must be the browser-facing FastAPI base URL. In Docker Compose it is set to `http://localhost:8000`, not `http://api:8000`, because browser requests resolve from the host.
+
+## Timezone Contract
+
+`APP_TIMEZONE` defines the application financial calendar. The default is `Asia/Kolkata`.
+
+Transaction timestamps are stored internally as timezone-naive UTC datetimes. Timezone-aware API input is converted to UTC before storage; timezone-naive API input is interpreted in `APP_TIMEZONE`, then converted to UTC. The manual frontend datetime input is converted from browser-local time to a UTC ISO timestamp before submission.
+
+Financial day, month, transaction date-filter, and card billing-cycle boundaries are evaluated in `APP_TIMEZONE` and converted to UTC-naive database query boundaries.
 
 ## Backend Local Setup
 

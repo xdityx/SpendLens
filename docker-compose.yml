@@ -21,6 +21,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://spendlens:spendlens@db:5432/spendlens
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      APP_TIMEZONE: Asia/Kolkata
     depends_on:
       db:
         condition: service_healthy

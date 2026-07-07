@@ -14,7 +14,7 @@ import {
   getErrorMessage,
   getTransactions,
 } from "@/lib/api";
-import { formatDateTime, maxDateTimeLocalNow } from "@/lib/dates";
+import { formatDateTime, localDateTimeInputToUtcIso, maxDateTimeLocalNow } from "@/lib/dates";
 import { formatMoney, isValidMoneyInput, transactionAmountDisplay } from "@/lib/money";
 import type {
   Account,
@@ -328,8 +328,14 @@ export function TransactionsClient() {
     if (form.description.trim()) {
       payload.description = form.description.trim();
     }
-    if (form.occurredAt) {
-      payload.occurred_at = form.occurredAt;
+    try {
+      const occurredAtIso = localDateTimeInputToUtcIso(form.occurredAt);
+      if (occurredAtIso) {
+        payload.occurred_at = occurredAtIso;
+      }
+    } catch (dateError) {
+      setSubmitError(dateError instanceof Error ? dateError.message : "Enter a valid occurred-at date and time.");
+      return;
     }
 
     setSubmitting(true);
