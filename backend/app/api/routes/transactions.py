@@ -1,18 +1,64 @@
 import uuid
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.routes._helpers import get_account_or_404, get_category_or_404, get_commitment_or_404
 from app.core.database import get_db
 from app.models.account import AccountType
+from app.models.commitment import CommitmentType, RecurringCommitment
 from app.models.transaction import Transaction, TransactionType
 from app.schemas.transaction import TransactionCreate, TransactionRead
 
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+def _utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _now_utc_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _validate_commitment_link(payload: TransactionCreate, commitment: RecurringCommitment) -> None:
+    if payload.transaction_type == TransactionType.TRANSFER:
+        raise HTTPException(
+            status_code=422,
+            detail="Transfers cannot be linked to recurring commitments",
+        )
+
+    if payload.category_id != commitment.category_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Linked transaction category_id must match the recurring commitment category_id",
+        )
+
+    if payload.source_account_id != commitment.account_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Linked transaction source_account_id must match the recurring commitment account_id",
+        )
+
+    if commitment.commitment_type == CommitmentType.FIXED_EXPENSE:
+        if payload.transaction_type != TransactionType.EXPENSE:
+            raise HTTPException(
+                status_code=422,
+                detail="Fixed expense commitments can only be linked to expense transactions",
+            )
+        return
+
+    if commitment.commitment_type == CommitmentType.INVESTMENT:
+        if payload.transaction_type != TransactionType.INVESTMENT:
+            raise HTTPException(
+                status_code=422,
+                detail="Investment commitments can only be linked to investment transactions",
+            )
 
 
 @router.post("", response_model=TransactionRead, status_code=201)
@@ -29,18 +75,37 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
     if payload.category_id is not None:
         get_category_or_404(db, payload.category_id)
 
+    linked_commitment = None
     if payload.recurring_commitment_id is not None:
-        get_commitment_or_404(db, payload.recurring_commitment_id)
+        linked_commitment = get_commitment_or_404(db, payload.recurring_commitment_id)
+
+    if payload.occurred_at is not None and _utc_naive(payload.occurred_at) > _now_utc_naive():
+        raise HTTPException(
+            status_code=422,
+            detail="Transactions cannot be future-dated",
+        )
+
+    if payload.transaction_type == TransactionType.TRANSFER and source_account is not None:
+        if source_account.account_type == AccountType.CREDIT_CARD:
+            raise HTTPException(
+                status_code=422,
+                detail="Credit cards cannot be used as the source account for transfers",
+            )
 
     if payload.transaction_type == TransactionType.INVESTMENT and source_account is not None:
         if source_account.account_type == AccountType.CREDIT_CARD:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,
                 detail="Credit cards cannot be used as the source account for an investment",
             )
 
+    if linked_commitment is not None:
+        _validate_commitment_link(payload, linked_commitment)
+
     if data["occurred_at"] is None:
-        data["occurred_at"] = datetime.utcnow()
+        data["occurred_at"] = _now_utc_naive()
+    else:
+        data["occurred_at"] = _utc_naive(data["occurred_at"])
 
     transaction = Transaction(**data)
     db.add(transaction)
@@ -59,7 +124,7 @@ def list_transactions(
     db: Session = Depends(get_db),
 ) -> list[Transaction]:
     if date_from is not None and date_to is not None and date_from > date_to:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="date_from must be <= date_to")
+        raise HTTPException(status_code=422, detail="date_from must be <= date_to")
 
     statement = select(Transaction)
     if account_id is not None:

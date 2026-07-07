@@ -120,15 +120,19 @@ Credit-card bill payment:
 
 ```text
 transaction_type = transfer
-source_account = bank account
+source_account = bank/cash/wallet account
 destination_account = credit card
 ```
 
-This reduces bank cash and reduces card liability. It is not another expense, which prevents double-counting.
+This reduces liquid cash and reduces card liability. It is not another expense, which prevents double-counting.
+
+Credit cards cannot be transfer source accounts in Phase 1. Credit-card cash advances and balance transfers are not modeled.
 
 Investments reduce liquid cash and count toward the monthly savings target. Credit cards cannot be used as the source account for investment transactions.
 
 Transfers between bank, cash, and wallet accounts move money but do not count as spending.
+
+When a transaction links to a recurring commitment, it must match the commitment's configured account, category, and commitment type. Fixed-expense commitments can only link to expense transactions; investment commitments can only link to investment transactions.
 
 ## Credit Card Handling
 
