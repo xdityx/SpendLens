@@ -61,6 +61,15 @@ def current_month_utc_bounds(as_of: date) -> tuple[datetime, datetime]:
     return app_date_start_utc_naive(month_start(as_of)), app_date_end_exclusive_utc_naive(as_of)
 
 
+def full_month_utc_bounds(day: date) -> tuple[datetime, datetime]:
+    start = month_start(day)
+    return app_date_start_utc_naive(start), app_date_start_utc_naive(next_month(start))
+
+
+def app_local_date_from_utc_naive(value: datetime) -> date:
+    return _utc_naive_to_aware(value).astimezone(get_app_timezone()).date()
+
+
 def current_month_bounds(as_of: date) -> tuple[datetime, datetime]:
     return current_month_utc_bounds(as_of)
 

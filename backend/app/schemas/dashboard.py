@@ -8,6 +8,7 @@ class SafeToSpendSummary(BaseModel):
     liquid_cash: Decimal
     credit_card_liability: Decimal
     remaining_fixed_commitments: Decimal
+    remaining_emi_installments: Decimal
     monthly_savings_target: Decimal
     savings_completed_this_month: Decimal
     remaining_savings_target: Decimal

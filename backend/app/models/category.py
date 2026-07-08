@@ -21,3 +21,4 @@ class Category(Base):
 
     transactions = relationship("Transaction", back_populates="category")
     commitments = relationship("RecurringCommitment", back_populates="category")
+    emi_plans = relationship("EMIPlan", back_populates="category")

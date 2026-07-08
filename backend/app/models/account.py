@@ -10,6 +10,7 @@ from app.models.base import Base, TimestampMixin, uuid_pk
 
 if TYPE_CHECKING:
     from app.models.commitment import RecurringCommitment
+    from app.models.emi_plan import EMIPlan
     from app.models.transaction import Transaction
 
 
@@ -49,3 +50,4 @@ class Account(Base, TimestampMixin):
         foreign_keys="Transaction.destination_account_id",
     )
     commitments: Mapped[list["RecurringCommitment"]] = relationship(back_populates="account")
+    emi_plans: Mapped[list["EMIPlan"]] = relationship(back_populates="account")

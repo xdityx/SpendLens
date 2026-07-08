@@ -4,17 +4,20 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.commitment import CommitmentType, RecurringCommitment
 from app.models.financial_profile import FinancialProfile
 from app.models.transaction import Transaction, TransactionType
 from app.services.balance_service import BalanceService, ZERO
+from app.services.commitment_status_service import CommitmentStatusService
 from app.services.date_utils import current_app_date, current_month_utc_bounds
+from app.services.emi_service import EMIService
 
 
 class SafeToSpendService:
     def __init__(self, db: Session):
         self.db = db
         self.balance_service = BalanceService(db)
+        self.commitment_status_service = CommitmentStatusService(db)
+        self.emi_service = EMIService(db)
 
     def summary(self, as_of: date | None = None) -> dict[str, Decimal | str]:
         calculation_date = as_of or current_app_date()
@@ -25,10 +28,12 @@ class SafeToSpendService:
         liquid_cash = self.balance_service.liquid_cash(calculation_date)
         credit_card_liability = self.balance_service.total_credit_card_liability(calculation_date)
         remaining_fixed_commitments = self._remaining_fixed_commitments(calculation_date)
+        remaining_emi_installments = self._remaining_emi_installments(calculation_date)
         safe_to_spend = (
             liquid_cash
             - credit_card_liability
             - remaining_fixed_commitments
+            - remaining_emi_installments
             - remaining_savings_target
         )
 
@@ -36,6 +41,7 @@ class SafeToSpendService:
             "liquid_cash": liquid_cash,
             "credit_card_liability": credit_card_liability,
             "remaining_fixed_commitments": remaining_fixed_commitments,
+            "remaining_emi_installments": remaining_emi_installments,
             "monthly_savings_target": monthly_savings_target,
             "savings_completed_this_month": savings_completed,
             "remaining_savings_target": remaining_savings_target,
@@ -58,26 +64,10 @@ class SafeToSpendService:
         return Decimal(result or ZERO)
 
     def _remaining_fixed_commitments(self, as_of: date) -> Decimal:
-        start_dt, end_dt = current_month_utc_bounds(as_of)
-        fulfilled_ids = set(
-            self.db.scalars(
-                select(Transaction.recurring_commitment_id).where(
-                    Transaction.recurring_commitment_id.is_not(None),
-                    Transaction.occurred_at >= start_dt,
-                    Transaction.occurred_at < end_dt,
-                )
-            ).all()
-        )
-        commitments = self.db.scalars(
-            select(RecurringCommitment).where(
-                RecurringCommitment.is_active.is_(True),
-                RecurringCommitment.commitment_type == CommitmentType.FIXED_EXPENSE,
-            )
-        ).all()
-        return sum(
-            (Decimal(commitment.amount) for commitment in commitments if commitment.id not in fulfilled_ids),
-            ZERO,
-        )
+        return self.commitment_status_service.remaining_fixed_commitments(as_of)
+
+    def _remaining_emi_installments(self, as_of: date) -> Decimal:
+        return self.emi_service.current_month_reserve_total(as_of)
 
     @staticmethod
     def _status(safe_to_spend: Decimal) -> str:

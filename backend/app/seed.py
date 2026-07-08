@@ -6,6 +6,7 @@ from app.models.category import Category
 
 INITIAL_CATEGORIES = [
     "Food",
+    "Housing",
     "EMI",
     "Subscription",
     "Shopping",

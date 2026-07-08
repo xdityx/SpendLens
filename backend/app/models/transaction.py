@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Uuid, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Uuid, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.account import Account
     from app.models.category import Category
     from app.models.commitment import RecurringCommitment
+    from app.models.emi_plan import EMIPlan
 
 
 class TransactionType(str, Enum):
@@ -26,6 +27,12 @@ class TransactionType(str, Enum):
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    __table_args__ = (
+        CheckConstraint(
+            "recurring_commitment_id IS NULL OR emi_plan_id IS NULL",
+            name="ck_transactions_single_obligation_link",
+        ),
+    )
 
     id = uuid_pk()
     transaction_type: Mapped[TransactionType] = mapped_column(
@@ -49,6 +56,11 @@ class Transaction(Base):
         ForeignKey("recurring_commitments.id"),
         nullable=True,
     )
+    emi_plan_id: Mapped[object | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("emi_plans.id"),
+        nullable=True,
+    )
     merchant: Mapped[str | None] = mapped_column(String(120), nullable=True)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
@@ -68,3 +80,4 @@ class Transaction(Base):
     )
     category: Mapped["Category | None"] = relationship(back_populates="transactions")
     recurring_commitment: Mapped["RecurringCommitment | None"] = relationship(back_populates="transactions")
+    emi_plan: Mapped["EMIPlan | None"] = relationship(back_populates="transactions")

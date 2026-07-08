@@ -6,6 +6,19 @@ export type TransactionType = "expense" | "income" | "transfer" | "investment" |
 
 export type CommitmentType = "fixed_expense" | "investment";
 
+export type CommitmentMonthlyStatus = "paid" | "partial" | "overdue_partial" | "upcoming" | "due_today" | "overdue";
+
+export type EMISetupCurrentMonthState = "not_posted" | "included_in_opening_liability" | "settled_before_tracking";
+
+export type EMICurrentMonthStatus =
+  | "included_in_card_liability"
+  | "settled_before_tracking"
+  | "posted"
+  | "upcoming"
+  | "due_today"
+  | "overdue"
+  | "completed";
+
 export type DashboardStatus = "available" | "fully_allocated" | "overcommitted" | string;
 
 export interface Account {
@@ -48,6 +61,7 @@ export interface Transaction {
   destination_account_id: string | null;
   category_id: string | null;
   recurring_commitment_id: string | null;
+  emi_plan_id: string | null;
   merchant: string | null;
   description: string | null;
   occurred_at: string;
@@ -61,6 +75,7 @@ export interface TransactionCreatePayload {
   destination_account_id?: string | null;
   category_id?: string | null;
   recurring_commitment_id?: string | null;
+  emi_plan_id?: string | null;
   merchant?: string | null;
   description?: string | null;
   occurred_at?: string | null;
@@ -97,6 +112,63 @@ export interface CommitmentCreatePayload {
   is_active?: boolean;
 }
 
+export interface CommitmentStatus {
+  commitment_id: string;
+  name: string;
+  amount: MoneyValue;
+  category_id: string;
+  account_id: string;
+  due_day: number;
+  due_date: string;
+  paid_amount_this_month: MoneyValue;
+  remaining_amount_this_month: MoneyValue;
+  status: CommitmentMonthlyStatus;
+  fulfilled_at: string | null;
+}
+
+export interface EMIPlan {
+  id: string;
+  name: string;
+  account_id: string;
+  category_id: string;
+  monthly_installment: MoneyValue;
+  remaining_amount_at_setup: MoneyValue;
+  due_day: number;
+  tracking_start_month: string;
+  setup_current_month_state: EMISetupCurrentMonthState;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EMIPlanCreatePayload {
+  name: string;
+  account_id: string;
+  category_id: string;
+  monthly_installment: string;
+  remaining_amount_at_setup: string;
+  due_day: number;
+  setup_current_month_state: EMISetupCurrentMonthState;
+}
+
+export interface EMIPlanStatus {
+  emi_plan_id: string;
+  name: string;
+  account_id: string;
+  category_id: string;
+  monthly_installment: MoneyValue;
+  remaining_amount_at_setup: MoneyValue;
+  current_installment_amount: MoneyValue;
+  current_month_status: EMICurrentMonthStatus;
+  current_month_reserve: MoneyValue;
+  remaining_unrecognized_amount: MoneyValue;
+  future_remaining_after_current_installment: MoneyValue;
+  due_day: number;
+  due_date: string;
+  posted_at: string | null;
+  is_active: boolean;
+}
+
 export interface FinancialProfile {
   id: string;
   monthly_savings_target: MoneyValue;
@@ -114,6 +186,7 @@ export interface DashboardSummary {
   liquid_cash: MoneyValue;
   credit_card_liability: MoneyValue;
   remaining_fixed_commitments: MoneyValue;
+  remaining_emi_installments: MoneyValue;
   monthly_savings_target: MoneyValue;
   savings_completed_this_month: MoneyValue;
   remaining_savings_target: MoneyValue;

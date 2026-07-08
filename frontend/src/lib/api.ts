@@ -1,11 +1,15 @@
-﻿import type {
+import type {
   Account,
   AccountCreatePayload,
   Category,
   Commitment,
   CommitmentCreatePayload,
+  CommitmentStatus,
   CreditCardExposure,
   DashboardSummary,
+  EMIPlan,
+  EMIPlanCreatePayload,
+  EMIPlanStatus,
   FinancialProfile,
   FinancialProfilePayload,
   Transaction,
@@ -110,10 +114,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-function buildQuery(params: Partial<Record<keyof TransactionFilters, string | undefined>>): string {
+function buildQuery(params: object): string {
   const searchParams = new URLSearchParams();
 
-  Object.entries(params).forEach(([key, value]) => {
+  Object.entries(params as Record<string, string | undefined>).forEach(([key, value]) => {
     if (value !== undefined && value !== "") {
       searchParams.set(key, value);
     }
@@ -175,6 +179,25 @@ export function getCommitments(): Promise<Commitment[]> {
 
 export function createCommitment(payload: CommitmentCreatePayload): Promise<Commitment> {
   return request<Commitment>("/api/v1/commitments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getCommitmentStatuses(asOf?: string): Promise<CommitmentStatus[]> {
+  return request<CommitmentStatus[]>(`/api/v1/commitments/status${buildQuery({ as_of: asOf })}`);
+}
+
+export function getEmiPlans(): Promise<EMIPlan[]> {
+  return request<EMIPlan[]>("/api/v1/emi-plans");
+}
+
+export function getEmiPlanStatuses(asOf?: string): Promise<EMIPlanStatus[]> {
+  return request<EMIPlanStatus[]>(`/api/v1/emi-plans/status${buildQuery({ as_of: asOf })}`);
+}
+
+export function createEmiPlan(payload: EMIPlanCreatePayload): Promise<EMIPlan> {
+  return request<EMIPlan>("/api/v1/emi-plans", {
     method: "POST",
     body: JSON.stringify(payload),
   });

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -31,3 +31,17 @@ class CommitmentRead(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CommitmentStatusRead(BaseModel):
+    commitment_id: uuid.UUID
+    name: str
+    amount: Decimal
+    category_id: uuid.UUID
+    account_id: uuid.UUID
+    due_day: int
+    due_date: date
+    paid_amount_this_month: Decimal
+    remaining_amount_this_month: Decimal
+    status: str
+    fulfilled_at: datetime | None

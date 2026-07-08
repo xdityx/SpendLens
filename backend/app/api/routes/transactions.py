@@ -1,21 +1,24 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.api.routes._helpers import get_account_or_404, get_category_or_404, get_commitment_or_404
+from app.api.routes._helpers import get_account_or_404, get_category_or_404, get_commitment_or_404, get_emi_plan_or_404
 from app.core.database import get_db
 from app.models.account import AccountType
 from app.models.commitment import CommitmentType, RecurringCommitment
+from app.models.emi_plan import EMIPlan, EMISetupCurrentMonthState
 from app.models.transaction import Transaction, TransactionType
 from app.schemas.transaction import TransactionCreate, TransactionRead
 from app.services import date_utils
+from app.services.balance_service import ZERO
+from app.services.emi_service import EMIService
 
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
-
 
 
 def _validate_commitment_link(payload: TransactionCreate, commitment: RecurringCommitment) -> None:
@@ -53,9 +56,63 @@ def _validate_commitment_link(payload: TransactionCreate, commitment: RecurringC
             )
 
 
+def _validate_emi_link(db: Session, payload: TransactionCreate, emi_plan: EMIPlan, occurred_at: datetime) -> None:
+    if payload.transaction_type != TransactionType.EXPENSE:
+        raise HTTPException(status_code=422, detail="EMI plan transactions must be expense transactions")
+
+    if payload.source_account_id != emi_plan.account_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Linked EMI transaction source_account_id must match the EMI plan credit-card account_id",
+        )
+
+    if payload.category_id != emi_plan.category_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Linked EMI transaction category_id must match the EMI plan category_id",
+        )
+
+    local_date = date_utils.app_local_date_from_utc_naive(occurred_at)
+    if local_date < emi_plan.tracking_start_month:
+        raise HTTPException(
+            status_code=422,
+            detail="Linked EMI transactions must occur on or after the EMI plan tracking_start_month",
+        )
+
+    installment_month = date_utils.month_start(local_date)
+    if (
+        installment_month == emi_plan.tracking_start_month
+        and emi_plan.setup_current_month_state != EMISetupCurrentMonthState.NOT_POSTED
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="The tracking-month EMI installment is already economically recognized for this plan",
+        )
+
+    service = EMIService(db)
+    expected_amount = service.expected_installment_amount(emi_plan, installment_month)
+    if expected_amount <= ZERO:
+        raise HTTPException(status_code=422, detail="This EMI plan has no installment due for that month")
+
+    if Decimal(payload.amount) != expected_amount:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Linked EMI transaction amount must equal the expected installment amount {expected_amount}",
+        )
+
+    if service.full_month_transaction_exists(emi_plan, installment_month):
+        raise HTTPException(
+            status_code=422,
+            detail="An EMI transaction already exists for this plan in that application-local month",
+        )
+
+
 @router.post("", response_model=TransactionRead, status_code=201)
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)) -> Transaction:
     data = payload.model_dump()
+
+    if payload.recurring_commitment_id is not None and payload.emi_plan_id is not None:
+        raise HTTPException(status_code=422, detail="Transactions cannot link to both a recurring commitment and an EMI plan")
 
     source_account = None
     if payload.source_account_id is not None:
@@ -71,6 +128,20 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
     if payload.recurring_commitment_id is not None:
         linked_commitment = get_commitment_or_404(db, payload.recurring_commitment_id)
 
+    linked_emi_plan = None
+    if payload.emi_plan_id is not None:
+        linked_emi_plan = get_emi_plan_or_404(db, payload.emi_plan_id)
+
+    if payload.occurred_at is None:
+        data["occurred_at"] = date_utils.utc_now_naive()
+    else:
+        occurred_at = date_utils.normalize_transaction_datetime(payload.occurred_at)
+        if occurred_at > date_utils.utc_now_naive():
+            raise HTTPException(
+                status_code=422,
+                detail="Transactions cannot be future-dated",
+            )
+        data["occurred_at"] = occurred_at
 
     if payload.transaction_type == TransactionType.TRANSFER and source_account is not None:
         if source_account.account_type == AccountType.CREDIT_CARD:
@@ -89,16 +160,8 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
     if linked_commitment is not None:
         _validate_commitment_link(payload, linked_commitment)
 
-    if payload.occurred_at is None:
-        data["occurred_at"] = date_utils.utc_now_naive()
-    else:
-        occurred_at = date_utils.normalize_transaction_datetime(payload.occurred_at)
-        if occurred_at > date_utils.utc_now_naive():
-            raise HTTPException(
-                status_code=422,
-                detail="Transactions cannot be future-dated",
-            )
-        data["occurred_at"] = occurred_at
+    if linked_emi_plan is not None:
+        _validate_emi_link(db, payload, linked_emi_plan, data["occurred_at"])
 
     transaction = Transaction(**data)
     db.add(transaction)

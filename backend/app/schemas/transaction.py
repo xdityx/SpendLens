@@ -17,6 +17,7 @@ class TransactionCreate(BaseModel):
     destination_account_id: uuid.UUID | None = None
     category_id: uuid.UUID | None = None
     recurring_commitment_id: uuid.UUID | None = None
+    emi_plan_id: uuid.UUID | None = None
     merchant: str | None = Field(default=None, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     occurred_at: datetime | None = None
@@ -59,6 +60,7 @@ class TransactionRead(BaseModel):
     destination_account_id: uuid.UUID | None
     category_id: uuid.UUID | None
     recurring_commitment_id: uuid.UUID | None
+    emi_plan_id: uuid.UUID | None
     merchant: str | None
     description: str | None
     occurred_at: datetime

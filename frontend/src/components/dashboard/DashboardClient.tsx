@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -11,18 +11,24 @@ import {
   getAccounts,
   getCardExposure,
   getCategories,
+  getCommitments,
+  getCommitmentStatuses,
   getDashboardSummary,
+  getEmiPlans,
   getErrorMessage,
   getFinancialProfile,
   getTransactions,
 } from "@/lib/api";
-import { formatDateTime } from "@/lib/dates";
+import { formatDate, formatDateTime } from "@/lib/dates";
 import { clampPercentage, formatMoney, moneyToNumber, transactionAmountDisplay } from "@/lib/money";
 import type {
   Account,
   Category,
+  Commitment,
+  CommitmentStatus,
   CreditCardExposure,
   DashboardSummary,
+  EMIPlan,
   FinancialProfile,
   MoneyValue,
   Transaction,
@@ -36,6 +42,9 @@ interface DashboardData {
   profile: FinancialProfile | null;
   categories: Category[];
   accounts: Account[];
+  commitments: Commitment[];
+  commitmentStatuses: CommitmentStatus[];
+  emiPlans: EMIPlan[];
 }
 
 const statusLabels: Record<string, string> = {
@@ -52,6 +61,15 @@ const transactionTypeLabels: Record<TransactionType, string> = {
   refund: "Refund",
 };
 
+const commitmentStatusLabels: Record<CommitmentStatus["status"], string> = {
+  paid: "Paid",
+  partial: "Partially paid",
+  overdue_partial: "Partially paid - overdue",
+  upcoming: "Upcoming",
+  due_today: "Due today",
+  overdue: "Overdue",
+};
+
 function statusClass(status: string): string {
   if (status === "overcommitted") {
     return "status-pill danger";
@@ -60,6 +78,42 @@ function statusClass(status: string): string {
     return "status-pill warning";
   }
   return "status-pill success";
+}
+
+function obligationStatusClass(status: CommitmentStatus["status"]): string {
+  if (status === "paid") {
+    return "status-pill success";
+  }
+  if (status === "overdue" || status === "overdue_partial") {
+    return "status-pill danger";
+  }
+  return "status-pill warning";
+}
+
+function accountName(accountsById: Map<string, Account>, accountId: string | null): string {
+  if (!accountId) {
+    return "Not linked";
+  }
+  return accountsById.get(accountId)?.name ?? "Unknown account";
+}
+
+function categoryName(categoriesById: Map<string, Category>, categoryId: string | null, fallback = "Uncategorized"): string {
+  if (!categoryId) {
+    return fallback;
+  }
+  return categoriesById.get(categoryId)?.name ?? "Unknown category";
+}
+
+function accountContext(transaction: Transaction, accountsById: Map<string, Account>): string {
+  if (transaction.transaction_type === "transfer") {
+    return `${accountName(accountsById, transaction.source_account_id)} -> ${accountName(accountsById, transaction.destination_account_id)}`;
+  }
+
+  if (transaction.transaction_type === "expense" || transaction.transaction_type === "investment") {
+    return accountName(accountsById, transaction.source_account_id);
+  }
+
+  return accountName(accountsById, transaction.destination_account_id);
 }
 
 function SummaryCard({ label, value, tone }: { label: string; value: MoneyValue; tone?: "negative" | "positive" }) {
@@ -71,20 +125,85 @@ function SummaryCard({ label, value, tone }: { label: string; value: MoneyValue;
   );
 }
 
-function RecentTransactionRow({ transaction }: { transaction: Transaction }) {
+function BreakdownRow({ label, value, tone }: { label: string; value: MoneyValue; tone?: "negative" | "positive" }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd className={tone ? `amount ${tone}` : "amount"}>{formatMoney(value)}</dd>
+    </div>
+  );
+}
+
+function RecentTransactionRow({
+  accountsById,
+  categoriesById,
+  commitmentsById,
+  emiPlansById,
+  transaction,
+}: {
+  accountsById: Map<string, Account>;
+  categoriesById: Map<string, Category>;
+  commitmentsById: Map<string, Commitment>;
+  emiPlansById: Map<string, EMIPlan>;
+  transaction: Transaction;
+}) {
   const amount = transactionAmountDisplay(transaction.transaction_type, transaction.amount);
-  const label = transaction.merchant?.trim() || transactionTypeLabels[transaction.transaction_type];
+  const linkedCommitment = transaction.recurring_commitment_id ? commitmentsById.get(transaction.recurring_commitment_id) : undefined;
+  const linkedEmiPlan = transaction.emi_plan_id ? emiPlansById.get(transaction.emi_plan_id) : undefined;
+  const label = transaction.merchant?.trim() || linkedCommitment?.name || linkedEmiPlan?.name || transactionTypeLabels[transaction.transaction_type];
+  const secondary = [
+    categoryName(categoriesById, transaction.category_id, transactionTypeLabels[transaction.transaction_type]),
+    accountContext(transaction, accountsById),
+    formatDateTime(transaction.occurred_at),
+  ].join(" - ");
 
   return (
     <li className="transaction-row">
       <div>
         <strong>{label}</strong>
-        <span>
-          {transactionTypeLabels[transaction.transaction_type]} - {formatDateTime(transaction.occurred_at)}
-        </span>
+        <span>{secondary}</span>
       </div>
       <strong className={`amount ${amount.tone}`}>{amount.label}</strong>
     </li>
+  );
+}
+
+function CommitmentObligationCard({ status }: { status: CommitmentStatus }) {
+  const hasRemaining = moneyToNumber(status.remaining_amount_this_month) > 0;
+
+  return (
+    <article className="account-card obligation-card">
+      <div className="section-heading-row compact">
+        <div>
+          <h3>{status.name}</h3>
+          <p>Due {formatDate(status.due_date)}</p>
+        </div>
+        <span className={obligationStatusClass(status.status)}>{commitmentStatusLabels[status.status]}</span>
+      </div>
+      <dl className="detail-grid">
+        <div>
+          <dt>Amount</dt>
+          <dd>{formatMoney(status.amount)}</dd>
+        </div>
+        <div>
+          <dt>Paid this month</dt>
+          <dd>{formatMoney(status.paid_amount_this_month)}</dd>
+        </div>
+        <div>
+          <dt>Remaining this month</dt>
+          <dd>{formatMoney(status.remaining_amount_this_month)}</dd>
+        </div>
+        <div>
+          <dt>Due date</dt>
+          <dd>{formatDate(status.due_date)}</dd>
+        </div>
+      </dl>
+      {hasRemaining ? (
+        <Link className="secondary-button card-action" href={`/transactions?commitment_id=${status.commitment_id}`}>
+          Record payment
+        </Link>
+      ) : null}
+    </article>
   );
 }
 
@@ -98,16 +217,19 @@ export function DashboardClient() {
     setError(null);
 
     try {
-      const [summary, cards, transactions, profile, categories, accounts] = await Promise.all([
+      const [summary, cards, transactions, profile, categories, accounts, commitments, commitmentStatuses, emiPlans] = await Promise.all([
         getDashboardSummary(),
         getCardExposure(),
         getTransactions(),
         getFinancialProfile(),
         getCategories(),
         getAccounts(),
+        getCommitments(),
+        getCommitmentStatuses(),
+        getEmiPlans(),
       ]);
 
-      setData({ summary, cards, transactions, profile, categories, accounts });
+      setData({ summary, cards, transactions, profile, categories, accounts, commitments, commitmentStatuses, emiPlans });
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -120,6 +242,10 @@ export function DashboardClient() {
   }, [loadDashboard]);
 
   const recentTransactions = useMemo(() => data?.transactions.slice(0, 8) ?? [], [data?.transactions]);
+  const accountsById = useMemo(() => new Map(data?.accounts.map((account) => [account.id, account]) ?? []), [data?.accounts]);
+  const categoriesById = useMemo(() => new Map(data?.categories.map((category) => [category.id, category]) ?? []), [data?.categories]);
+  const commitmentsById = useMemo(() => new Map(data?.commitments.map((commitment) => [commitment.id, commitment]) ?? []), [data?.commitments]);
+  const emiPlansById = useMemo(() => new Map(data?.emiPlans.map((plan) => [plan.id, plan]) ?? []), [data?.emiPlans]);
 
   if (loading) {
     return <LoadingState label="Loading your spending position" rows={5} />;
@@ -139,6 +265,7 @@ export function DashboardClient() {
   const savingsTarget = moneyToNumber(summary.monthly_savings_target);
   const savingsCompleted = moneyToNumber(summary.savings_completed_this_month);
   const savingsProgress = savingsTarget > 0 ? Math.min(100, Math.max(0, (savingsCompleted / savingsTarget) * 100)) : 0;
+  const isNegativeSafeToSpend = moneyToNumber(summary.safe_to_spend) < 0;
 
   return (
     <div className="page-stack">
@@ -152,6 +279,26 @@ export function DashboardClient() {
           Add Transaction
         </Link>
       </header>
+
+      <section className="panel breakdown-panel" aria-label="Safe to Spend breakdown">
+        <div className="section-heading-row compact">
+          <div>
+            <p className="eyebrow">Why this amount?</p>
+            <h2>Safe to Spend breakdown</h2>
+          </div>
+        </div>
+        <dl className="breakdown-list">
+          <BreakdownRow label="Liquid cash" value={summary.liquid_cash} tone="positive" />
+          <BreakdownRow label="Card liability" value={summary.credit_card_liability} tone="negative" />
+          <BreakdownRow label="Fixed commitments left" value={summary.remaining_fixed_commitments} />
+          <BreakdownRow label="EMI installments left" value={summary.remaining_emi_installments} />
+          <BreakdownRow label="Savings target left" value={summary.remaining_savings_target} />
+          <BreakdownRow label="Safe to Spend" value={summary.safe_to_spend} tone={isNegativeSafeToSpend ? "negative" : "positive"} />
+        </dl>
+        {isNegativeSafeToSpend ? (
+          <p className="helper-text">Your current cash does not fully cover recorded liabilities and reserved obligations.</p>
+        ) : null}
+      </section>
 
       {data.categories.length === 0 ? <CategorySetupWarning /> : null}
 
@@ -177,6 +324,7 @@ export function DashboardClient() {
         <SummaryCard label="Liquid Cash" value={summary.liquid_cash} tone="positive" />
         <SummaryCard label="Card Liability" value={summary.credit_card_liability} tone="negative" />
         <SummaryCard label="Fixed Commitments Left" value={summary.remaining_fixed_commitments} />
+        <SummaryCard label="EMI Installments Left" value={summary.remaining_emi_installments} />
         <SummaryCard label="Savings Target Left" value={summary.remaining_savings_target} />
       </section>
 
@@ -207,6 +355,25 @@ export function DashboardClient() {
           <p>
             No monthly savings target set. <Link href="/settings">Set one in Settings.</Link>
           </p>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="section-heading-row">
+          <div>
+            <p className="eyebrow">Monthly obligations</p>
+            <h2>Fixed commitments</h2>
+          </div>
+          <Link href="/settings">Settings</Link>
+        </div>
+        {data.commitmentStatuses.length === 0 ? (
+          <EmptyState title="No fixed commitments" message="Create fixed monthly commitments in Settings to reserve them here." />
+        ) : (
+          <div className="card-list obligation-grid">
+            {data.commitmentStatuses.map((status) => (
+              <CommitmentObligationCard key={status.commitment_id} status={status} />
+            ))}
+          </div>
         )}
       </section>
 
@@ -286,7 +453,14 @@ export function DashboardClient() {
           ) : (
             <ul className="transaction-list">
               {recentTransactions.map((transaction) => (
-                <RecentTransactionRow key={transaction.id} transaction={transaction} />
+                <RecentTransactionRow
+                  accountsById={accountsById}
+                  categoriesById={categoriesById}
+                  commitmentsById={commitmentsById}
+                  emiPlansById={emiPlansById}
+                  key={transaction.id}
+                  transaction={transaction}
+                />
               ))}
             </ul>
           )}

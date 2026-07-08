@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #071018;
   --bg-soft: #0b1520;
   --surface: #101b27;
@@ -763,4 +763,61 @@ textarea {
   .panel {
     padding: 18px;
   }
+}
+
+.breakdown-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.breakdown-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.breakdown-list div {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+.breakdown-list div:last-child {
+  border-bottom: 0;
+  padding-top: 4px;
+  padding-bottom: 0;
+}
+
+.breakdown-list dt {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.breakdown-list dd {
+  margin: 0;
+  font-weight: 900;
+}
+
+.obligation-grid {
+  grid-template-columns: 1fr;
+}
+
+.obligation-card {
+  display: grid;
+  gap: 12px;
+}
+
+.card-action {
+  width: fit-content;
+}
+
+.table-subtext {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
 }
