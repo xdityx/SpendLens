@@ -28,6 +28,10 @@ If no financial profile exists yet, `monthly_savings_target` defaults to `0` for
 
 Business calculations live in `backend/app/services`. The frontend does not duplicate financial formulas; it displays values returned by the FastAPI API.
 
+## Continuous Integration
+
+GitHub Actions runs backend pytest, frontend ESLint, and the frontend production build on pushes and pull requests for `master`.
+
 ## Phase 2A Frontend
 
 The frontend focuses on manual personal finance tracking:
