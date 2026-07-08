@@ -21,6 +21,8 @@ SETUP_RECOGNIZED_STATES = {
     EMISetupCurrentMonthState.INCLUDED_IN_OPENING_LIABILITY,
     EMISetupCurrentMonthState.SETTLED_BEFORE_TRACKING,
 }
+INSTALLMENT_HISTORY_LOCK_REASON = "Installment history has already been recorded."
+TRACKING_MONTH_PASSED_LOCK_REASON = "The EMI tracking month has passed."
 
 
 class EMIService:
@@ -62,7 +64,7 @@ class EMIService:
             remaining_before_installment=remaining_before_installment,
             current_transaction=current_transaction,
         )
-        current_month_reserve = current_installment_amount if status in RESERVED_STATUSES else ZERO
+        current_month_reserve = current_installment_amount if plan.is_active and status in RESERVED_STATUSES else ZERO
 
         return {
             "emi_plan_id": plan.id,
@@ -82,6 +84,24 @@ class EMIService:
             "posted_at": current_transaction.occurred_at if current_transaction is not None else None,
             "is_active": plan.is_active,
         }
+
+    def is_financial_configuration_locked(self, plan: EMIPlan) -> bool:
+        return self.financial_configuration_lock_reason(plan) is not None
+
+    def financial_configuration_lock_reason(self, plan: EMIPlan) -> str | None:
+        if self.linked_transaction_exists(plan):
+            return INSTALLMENT_HISTORY_LOCK_REASON
+        if month_start(current_app_date()) > plan.tracking_start_month:
+            return TRACKING_MONTH_PASSED_LOCK_REASON
+        return None
+
+    def linked_transaction_exists(self, plan: EMIPlan) -> bool:
+        return (
+            self.db.scalar(
+                select(func.count(Transaction.id)).where(Transaction.emi_plan_id == plan.id)
+            )
+            or 0
+        ) > 0
 
     def actionable_installment_month(self, plan: EMIPlan, calendar_month: date) -> date:
         target_month = month_start(calendar_month)

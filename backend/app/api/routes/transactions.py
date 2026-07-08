@@ -64,6 +64,9 @@ def _validate_emi_link(db: Session, payload: TransactionCreate, emi_plan: EMIPla
     if payload.transaction_type != TransactionType.EXPENSE:
         raise HTTPException(status_code=422, detail="EMI plan transactions must be expense transactions")
 
+    if not emi_plan.is_active:
+        raise HTTPException(status_code=422, detail="Inactive EMI plans cannot record new installments")
+
     if payload.source_account_id != emi_plan.account_id:
         raise HTTPException(
             status_code=422,

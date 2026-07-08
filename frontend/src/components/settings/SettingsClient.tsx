@@ -13,11 +13,13 @@ import {
   getAccounts,
   getCategories,
   getCommitments,
+  getEmiPlans,
   getEmiPlanStatuses,
   getErrorMessage,
   getFinancialProfile,
-  updateFinancialProfile,
   updateCommitment,
+  updateEmiPlan,
+  updateFinancialProfile,
 } from "@/lib/api";
 import { formatDate, formatMonth } from "@/lib/dates";
 import { formatMoney, isValidMoneyInput, isValidNonNegativeMoneyInput } from "@/lib/money";
@@ -28,8 +30,10 @@ import type {
   CommitmentCreatePayload,
   CommitmentUpdatePayload,
   CommitmentType,
+  EMIPlan,
   EMIPlanCreatePayload,
   EMIPlanStatus,
+  EMIPlanUpdatePayload,
   EMISetupCurrentMonthState,
   FinancialProfile,
 } from "@/lib/types";
@@ -67,6 +71,17 @@ interface EMIFormState {
   setupCurrentMonthState: EMISetupCurrentMonthState;
 }
 
+interface EMIPlanEditFormState {
+  name: string;
+  accountId: string;
+  categoryId: string;
+  monthlyInstallment: string;
+  remainingAmountAtSetup: string;
+  dueDay: string;
+  setupCurrentMonthState: EMISetupCurrentMonthState;
+  isActive: boolean;
+}
+
 const initialProfileForm: ProfileFormState = {
   monthlySavingsTarget: "0",
   salaryDay: "1",
@@ -98,6 +113,17 @@ const initialEmiForm: EMIFormState = {
   remainingAmountAtSetup: "",
   dueDay: "",
   setupCurrentMonthState: "not_posted",
+};
+
+const initialEmiPlanEditForm: EMIPlanEditFormState = {
+  name: "",
+  accountId: "",
+  categoryId: "",
+  monthlyInstallment: "",
+  remainingAmountAtSetup: "",
+  dueDay: "",
+  setupCurrentMonthState: "not_posted",
+  isActive: true,
 };
 
 const commitmentTypeLabels: Record<CommitmentType, string> = {

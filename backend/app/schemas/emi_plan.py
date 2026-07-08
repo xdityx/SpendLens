@@ -18,6 +18,19 @@ class EMIPlanCreate(BaseModel):
     setup_current_month_state: EMISetupCurrentMonthState
 
 
+class EMIPlanUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    account_id: uuid.UUID
+    category_id: uuid.UUID
+    monthly_installment: Money = Field(gt=ZERO, max_digits=14, decimal_places=2)
+    remaining_amount_at_setup: Money = Field(gt=ZERO, max_digits=14, decimal_places=2)
+    due_day: int = Field(ge=1, le=28)
+    setup_current_month_state: EMISetupCurrentMonthState
+    is_active: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class EMIPlanRead(BaseModel):
     id: uuid.UUID
     name: str
@@ -31,6 +44,8 @@ class EMIPlanRead(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    financial_configuration_locked: bool
+    financial_configuration_lock_reason: str | None
 
     model_config = ConfigDict(from_attributes=True)
 

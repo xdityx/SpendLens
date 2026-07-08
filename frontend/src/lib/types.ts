@@ -148,6 +148,8 @@ export interface EMIPlan {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  financial_configuration_locked: boolean;
+  financial_configuration_lock_reason: string | null;
 }
 
 export interface EMIPlanCreatePayload {
@@ -158,6 +160,17 @@ export interface EMIPlanCreatePayload {
   remaining_amount_at_setup: string;
   due_day: number;
   setup_current_month_state: EMISetupCurrentMonthState;
+}
+
+export interface EMIPlanUpdatePayload {
+  name: string;
+  account_id: string;
+  category_id: string;
+  monthly_installment: string;
+  remaining_amount_at_setup: string;
+  due_day: number;
+  setup_current_month_state: EMISetupCurrentMonthState;
+  is_active: boolean;
 }
 
 export interface EMIPlanStatus {

@@ -11,6 +11,7 @@ import type {
   EMIPlan,
   EMIPlanCreatePayload,
   EMIPlanStatus,
+  EMIPlanUpdatePayload,
   FinancialProfile,
   FinancialProfilePayload,
   Transaction,
@@ -207,6 +208,13 @@ export function getEmiPlanStatuses(asOf?: string): Promise<EMIPlanStatus[]> {
 export function createEmiPlan(payload: EMIPlanCreatePayload): Promise<EMIPlan> {
   return request<EMIPlan>("/api/v1/emi-plans", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateEmiPlan(emiPlanId: string, payload: EMIPlanUpdatePayload): Promise<EMIPlan> {
+  return request<EMIPlan>(`/api/v1/emi-plans/${emiPlanId}`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }
