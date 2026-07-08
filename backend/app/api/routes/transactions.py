@@ -56,6 +56,10 @@ def _validate_commitment_link(payload: TransactionCreate, commitment: RecurringC
             )
 
 
+def _format_installment_month(installment_month: date) -> str:
+    return installment_month.strftime("%Y-%m")
+
+
 def _validate_emi_link(db: Session, payload: TransactionCreate, emi_plan: EMIPlan, occurred_at: datetime) -> None:
     if payload.transaction_type != TransactionType.EXPENSE:
         raise HTTPException(status_code=422, detail="EMI plan transactions must be expense transactions")
@@ -90,6 +94,19 @@ def _validate_emi_link(db: Session, payload: TransactionCreate, emi_plan: EMIPla
         )
 
     service = EMIService(db)
+    missing_month = service.earliest_required_unrecognized_month_before(emi_plan, installment_month)
+    if missing_month is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"An earlier EMI installment month must be recognized first: {_format_installment_month(missing_month)}",
+        )
+
+    if service.later_linked_transaction_exists(emi_plan, installment_month):
+        raise HTTPException(
+            status_code=422,
+            detail="Cannot backfill an EMI installment before an already-recorded later installment",
+        )
+
     expected_amount = service.expected_installment_amount(emi_plan, installment_month)
     if expected_amount <= ZERO:
         raise HTTPException(status_code=422, detail="This EMI plan has no installment due for that month")

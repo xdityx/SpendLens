@@ -158,6 +158,7 @@ export interface EMIPlanStatus {
   category_id: string;
   monthly_installment: MoneyValue;
   remaining_amount_at_setup: MoneyValue;
+  installment_month: string;
   current_installment_amount: MoneyValue;
   current_month_status: EMICurrentMonthStatus;
   current_month_reserve: MoneyValue;

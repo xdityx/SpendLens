@@ -48,6 +48,8 @@ An unposted EMI installment is reserved. Once the installment posts as a linked 
 
 SpendLens does not subtract the total future EMI balance from Safe to Spend. It only subtracts the current month unrecognized installment reserve.
 
+EMI installment recognition is chronological. A later installment cannot be posted while an earlier required month is unrecognized, and SpendLens carries the earliest unrecognized installment forward as the actionable EMI obligation.
+
 ## Architecture
 
 - Backend: Python, FastAPI, Pydantic v2, SQLAlchemy 2.x, PostgreSQL, Alembic, Decimal money calculations.

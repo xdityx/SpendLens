@@ -17,7 +17,7 @@ import {
   getErrorMessage,
   getTransactions,
 } from "@/lib/api";
-import { formatDateTime, localDateTimeInputToUtcIso, maxDateTimeLocalNow } from "@/lib/dates";
+import { formatDateTime, formatMonth, localDateTimeInputToUtcIso, maxDateTimeLocalNow } from "@/lib/dates";
 import { formatMoney, isValidMoneyInput, moneyToNumber, transactionAmountDisplay } from "@/lib/money";
 import type {
   Account,
@@ -355,7 +355,7 @@ export function TransactionsClient() {
           emiPlanId: status.emi_plan_id,
           merchant: status.name,
         }));
-        setPrefillNotice("Prefilled the EMI installment posting. Review it, then submit to record the credit-card expense.");
+        setPrefillNotice(`Prefilled the EMI installment for ${formatMonth(status.installment_month)}. Review it, then submit to record the credit-card expense.`);
       }
     }
 
@@ -674,7 +674,7 @@ export function TransactionsClient() {
 
           {selectedEmiStatus ? (
             <p className="helper-text form-wide">
-              This records the EMI installment posting to the credit card. Paying the card bill remains a separate bank-to-card transfer.
+              This EMI installment is for {formatMonth(selectedEmiStatus.installment_month)}. Enter the date it posted to the credit card. Paying the card bill remains a separate bank-to-card transfer.
             </p>
           ) : null}
 

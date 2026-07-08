@@ -6,6 +6,8 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.database import get_db
+from app.main import app
 from app.models.account import Account, AccountType
 from app.models.category import Category
 from app.models.commitment import CommitmentType, RecurringCommitment
@@ -212,7 +214,14 @@ def create_emi_plan(
     return response.json()["id"]
 
 
-def post_emi_expense(client: TestClient, card_id: str, category_id: str, emi_plan_id: str, amount: str = "850.00"):
+def post_emi_expense(
+    client: TestClient,
+    card_id: str,
+    category_id: str,
+    emi_plan_id: str,
+    amount: str = "850.00",
+    occurred_at: str = "2026-07-08T12:00:00+05:30",
+):
     return client.post(
         "/api/v1/transactions",
         json={
@@ -221,7 +230,7 @@ def post_emi_expense(client: TestClient, card_id: str, category_id: str, emi_pla
             "source_account_id": card_id,
             "category_id": category_id,
             "emi_plan_id": emi_plan_id,
-            "occurred_at": "2026-07-08T12:00:00+05:30",
+            "occurred_at": occurred_at,
         },
     )
 
@@ -676,3 +685,205 @@ def test_commitment_status_endpoint_respects_explicit_as_of(api_client: TestClie
     status = response.json()[0]
     assert status["commitment_id"] == commitment
     assert status["status"] == "due_today"
+
+
+def test_later_emi_posting_is_rejected_when_august_is_missing(api_client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 7, 8, 8))
+    card = create_card(api_client)
+    category = create_category(api_client)
+    plan = create_emi_plan(api_client, card, category, remaining_amount_at_setup="2500.00")
+    july = post_emi_expense(api_client, card, category, plan, occurred_at="2026-07-08T12:00:00+05:30")
+    assert july.status_code == 201
+
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 9, 20, 8))
+    response = post_emi_expense(api_client, card, category, plan, occurred_at="2026-09-08T12:00:00+05:30")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "An earlier EMI installment month must be recognized first: 2026-08"
+
+
+def test_all_previous_required_months_recognized_accepts_next_chronological_month(api_client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 7, 8, 8))
+    card = create_card(api_client)
+    category = create_category(api_client)
+    plan = create_emi_plan(api_client, card, category, remaining_amount_at_setup="2500.00")
+    july = post_emi_expense(api_client, card, category, plan, occurred_at="2026-07-08T12:00:00+05:30")
+    assert july.status_code == 201
+
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 8, 20, 8))
+    response = post_emi_expense(api_client, card, category, plan, occurred_at="2026-08-08T12:00:00+05:30")
+
+    assert response.status_code == 201
+    assert response.json()["emi_plan_id"] == plan
+
+
+def test_backfill_is_rejected_when_later_emi_transaction_already_exists(db_session: Session, monkeypatch: Any) -> None:
+    category = add_category(db_session, "EMI")
+    card = add_card(db_session)
+    plan = add_emi_plan(db_session, card, category, remaining_amount_at_setup="2500")
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 7, 8), source_account=card, category=category, emi_plan=plan)
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 9, 8), source_account=card, category=category, emi_plan=plan)
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 10, 1, 8))
+
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/transactions",
+                json={
+                    "transaction_type": "expense",
+                    "amount": "850.00",
+                    "source_account_id": str(card.id),
+                    "category_id": str(category.id),
+                    "emi_plan_id": str(plan.id),
+                    "occurred_at": "2026-08-08T12:00:00+05:30",
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Cannot backfill an EMI installment before an already-recorded later installment"
+
+
+def test_missing_august_installment_remains_actionable_in_september(db_session: Session) -> None:
+    category = add_category(db_session, "EMI")
+    card = add_card(db_session)
+    plan = add_emi_plan(db_session, card, category, remaining_amount_at_setup="2500")
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 7, 8), source_account=card, category=category, emi_plan=plan)
+
+    status = EMIService(db_session).list_statuses(date(2026, 9, 5))[0]
+
+    assert status["installment_month"] == date(2026, 8, 1)
+    assert status["current_month_status"] == "overdue"
+    assert status["due_date"] == date(2026, 8, 12)
+    assert status["current_installment_amount"] == D("850.00")
+    assert status["current_month_reserve"] == D("850.00")
+
+
+def test_safe_to_spend_reserves_carried_august_installment_in_september(db_session: Session) -> None:
+    category = add_category(db_session, "EMI")
+    card = add_card(db_session)
+    plan = add_emi_plan(db_session, card, category, remaining_amount_at_setup="2500")
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 7, 8), source_account=card, category=category, emi_plan=plan)
+
+    summary = SafeToSpendService(db_session).summary(date(2026, 9, 5))
+
+    assert summary["remaining_emi_installments"] == D("850.00")
+
+
+def test_after_august_is_posted_september_becomes_actionable(db_session: Session) -> None:
+    category = add_category(db_session, "EMI")
+    card = add_card(db_session)
+    plan = add_emi_plan(db_session, card, category, remaining_amount_at_setup="2500")
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 7, 8), source_account=card, category=category, emi_plan=plan)
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 8, 8), source_account=card, category=category, emi_plan=plan)
+
+    status = EMIService(db_session).list_statuses(date(2026, 9, 5))[0]
+
+    assert status["installment_month"] == date(2026, 9, 1)
+    assert status["current_month_status"] == "upcoming"
+    assert status["current_installment_amount"] == D("800.00")
+    assert status["current_month_reserve"] == D("800.00")
+
+
+def test_smaller_final_installment_remains_correct_under_chronological_sequence(api_client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 7, 20, 8))
+    card = create_card(api_client)
+    category = create_category(api_client)
+    plan = create_emi_plan(api_client, card, category, remaining_amount_at_setup="2500.00")
+    assert post_emi_expense(api_client, card, category, plan, occurred_at="2026-07-08T12:00:00+05:30").status_code == 201
+
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 8, 20, 8))
+    assert post_emi_expense(api_client, card, category, plan, occurred_at="2026-08-08T12:00:00+05:30").status_code == 201
+
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 9, 20, 8))
+    response = post_emi_expense(api_client, card, category, plan, amount="800.00", occurred_at="2026-09-08T12:00:00+05:30")
+
+    assert response.status_code == 201
+    assert response.json()["amount"] == "800.00"
+
+
+def test_sequence_completion_produces_zero_reserve(db_session: Session) -> None:
+    category = add_category(db_session, "EMI")
+    card = add_card(db_session)
+    plan = add_emi_plan(db_session, card, category, remaining_amount_at_setup="2500")
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 7, 8), source_account=card, category=category, emi_plan=plan)
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 8, 8), source_account=card, category=category, emi_plan=plan)
+    add_transaction(db_session, TransactionType.EXPENSE, "800", occurred_at=at(2026, 9, 8), source_account=card, category=category, emi_plan=plan)
+
+    status = EMIService(db_session).list_statuses(date(2026, 10, 5))[0]
+
+    assert status["current_month_status"] == "completed"
+    assert status["current_month_reserve"] == D("0")
+
+
+def test_included_in_opening_liability_counts_tracking_month_for_sequence(api_client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 7, 8, 8))
+    card = create_card(api_client)
+    category = create_category(api_client)
+    plan = create_emi_plan(api_client, card, category, setup_state="included_in_opening_liability")
+
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 8, 20, 8))
+    response = post_emi_expense(api_client, card, category, plan, occurred_at="2026-08-08T12:00:00+05:30")
+
+    assert response.status_code == 201
+
+
+def test_settled_before_tracking_counts_tracking_month_for_sequence(api_client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 7, 8, 8))
+    card = create_card(api_client)
+    category = create_category(api_client)
+    plan = create_emi_plan(api_client, card, category, setup_state="settled_before_tracking")
+
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 8, 20, 8))
+    response = post_emi_expense(api_client, card, category, plan, occurred_at="2026-08-08T12:00:00+05:30")
+
+    assert response.status_code == 201
+
+
+def test_not_posted_tracking_month_requires_link_before_next_month(api_client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 7, 8, 8))
+    card = create_card(api_client)
+    category = create_category(api_client)
+    plan = create_emi_plan(api_client, card, category, setup_state="not_posted")
+
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 8, 20, 8))
+    response = post_emi_expense(api_client, card, category, plan, occurred_at="2026-08-08T12:00:00+05:30")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "An earlier EMI installment month must be recognized first: 2026-07"
+
+
+def test_emi_sequence_uses_app_timezone_local_month_boundaries(db_session: Session) -> None:
+    category = add_category(db_session, "EMI")
+    card = add_card(db_session)
+    plan = add_emi_plan(db_session, card, category, tracking_start_month=date(2026, 8, 1), remaining_amount_at_setup="1700")
+    add_transaction(db_session, TransactionType.EXPENSE, "850", occurred_at=at(2026, 7, 31, 19), source_account=card, category=category, emi_plan=plan)
+
+    service = EMIService(db_session)
+    status = service.list_statuses(date(2026, 9, 5))[0]
+
+    assert service.earliest_required_unrecognized_month_before(plan, date(2026, 9, 1)) is None
+    assert status["installment_month"] == date(2026, 9, 1)
+    assert status["current_installment_amount"] == D("850.00")
+
+
+def test_emi_status_endpoint_as_of_surfaces_carried_installment_deterministically(api_client: TestClient, monkeypatch: Any) -> None:
+    monkeypatch.setattr(date_utils, "utc_now_naive", lambda: at(2026, 7, 20, 8))
+    card = create_card(api_client)
+    category = create_category(api_client)
+    plan = create_emi_plan(api_client, card, category, remaining_amount_at_setup="2500.00")
+    assert post_emi_expense(api_client, card, category, plan, occurred_at="2026-07-08T12:00:00+05:30").status_code == 201
+
+    response = api_client.get("/api/v1/emi-plans/status?as_of=2026-09-05")
+
+    assert response.status_code == 200
+    status = response.json()[0]
+    assert status["emi_plan_id"] == plan
+    assert status["installment_month"] == "2026-08-01"
+    assert status["current_month_status"] == "overdue"
+    assert status["due_date"] == "2026-08-12"

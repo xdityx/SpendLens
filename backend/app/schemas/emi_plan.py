@@ -42,6 +42,7 @@ class EMIPlanStatusRead(BaseModel):
     category_id: uuid.UUID
     monthly_installment: Decimal
     remaining_amount_at_setup: Decimal
+    installment_month: date
     current_installment_amount: Decimal
     current_month_status: str
     current_month_reserve: Decimal

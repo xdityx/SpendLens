@@ -13,6 +13,7 @@ from app.services.date_utils import (
     current_month_utc_bounds,
     full_month_utc_bounds,
     month_start,
+    next_month,
 )
 
 RESERVED_STATUSES = {"upcoming", "due_today", "overdue"}
@@ -39,20 +40,26 @@ class EMIService:
         return sum((Decimal(status["current_month_reserve"]) for status in statuses), ZERO)
 
     def status_for_plan(self, plan: EMIPlan, as_of: date) -> dict[str, object]:
-        current_month = month_start(as_of)
-        due_date = date(as_of.year, as_of.month, plan.due_day)
-        remaining_before_current = self.remaining_before_month(plan, current_month)
-        current_installment_amount = self.expected_installment_amount(plan, current_month)
-        current_transaction = self.current_month_transaction(plan, as_of)
-        current_recognized_amount = self._current_recognized_amount(plan, current_month, current_installment_amount, current_transaction)
-        remaining_unrecognized_amount = max(remaining_before_current - current_recognized_amount, ZERO)
-        future_remaining_after_current = max(remaining_before_current - current_installment_amount, ZERO)
+        calendar_month = month_start(as_of)
+        installment_month = self.actionable_installment_month(plan, calendar_month)
+        due_date = date(installment_month.year, installment_month.month, plan.due_day)
+        remaining_before_installment = self.remaining_before_month(plan, installment_month)
+        current_installment_amount = self.expected_installment_amount(plan, installment_month)
+        current_transaction = self.transaction_for_status_month(plan, installment_month, as_of)
+        current_recognized_amount = self._current_recognized_amount(
+            plan,
+            installment_month,
+            current_installment_amount,
+            current_transaction,
+        )
+        remaining_unrecognized_amount = max(remaining_before_installment - current_recognized_amount, ZERO)
+        future_remaining_after_current = max(remaining_before_installment - current_installment_amount, ZERO)
         status = self._current_month_status(
             plan=plan,
             as_of=as_of,
             due_date=due_date,
-            current_month=current_month,
-            remaining_before_current=remaining_before_current,
+            installment_month=installment_month,
+            remaining_before_installment=remaining_before_installment,
             current_transaction=current_transaction,
         )
         current_month_reserve = current_installment_amount if status in RESERVED_STATUSES else ZERO
@@ -64,6 +71,7 @@ class EMIService:
             "category_id": plan.category_id,
             "monthly_installment": Decimal(plan.monthly_installment),
             "remaining_amount_at_setup": Decimal(plan.remaining_amount_at_setup),
+            "installment_month": installment_month,
             "current_installment_amount": current_installment_amount,
             "current_month_status": status,
             "current_month_reserve": current_month_reserve,
@@ -74,6 +82,11 @@ class EMIService:
             "posted_at": current_transaction.occurred_at if current_transaction is not None else None,
             "is_active": plan.is_active,
         }
+
+    def actionable_installment_month(self, plan: EMIPlan, calendar_month: date) -> date:
+        target_month = month_start(calendar_month)
+        missing_month = self.earliest_required_unrecognized_month_before(plan, target_month)
+        return missing_month or target_month
 
     def expected_installment_amount(self, plan: EMIPlan, installment_month: date) -> Decimal:
         target_month = month_start(installment_month)
@@ -94,8 +107,75 @@ class EMIService:
         setup_recognized = self._setup_recognized_amount(plan) if target_month > plan.tracking_start_month else ZERO
         return max(Decimal(plan.remaining_amount_at_setup) - setup_recognized - linked_total, ZERO)
 
+    def earliest_required_unrecognized_month_before(self, plan: EMIPlan, target_month: date) -> date | None:
+        target_month = month_start(target_month)
+        candidate_month = plan.tracking_start_month
+        remaining_amount = Decimal(plan.remaining_amount_at_setup)
+        monthly_installment = Decimal(plan.monthly_installment)
+
+        while candidate_month < target_month:
+            if remaining_amount <= ZERO:
+                return None
+            expected_amount = min(monthly_installment, remaining_amount)
+            if expected_amount <= ZERO:
+                return None
+            if not self.installment_month_is_recognized(plan, candidate_month):
+                return candidate_month
+            remaining_amount -= expected_amount
+            candidate_month = next_month(candidate_month)
+
+        return None
+
+    def installment_month_is_recognized(self, plan: EMIPlan, installment_month: date) -> bool:
+        target_month = month_start(installment_month)
+        if target_month < plan.tracking_start_month:
+            return False
+        if target_month == plan.tracking_start_month and plan.setup_current_month_state in SETUP_RECOGNIZED_STATES:
+            return True
+        return self.full_month_transaction_exists(plan, target_month)
+
+    def later_linked_transaction_exists(self, plan: EMIPlan, installment_month: date) -> bool:
+        later_start = app_date_start_utc_naive(next_month(month_start(installment_month)))
+        return (
+            self.db.scalar(
+                select(func.count(Transaction.id)).where(
+                    Transaction.emi_plan_id == plan.id,
+                    Transaction.transaction_type == TransactionType.EXPENSE,
+                    Transaction.occurred_at >= later_start,
+                )
+            )
+            or 0
+        ) > 0
+
     def current_month_transaction(self, plan: EMIPlan, as_of: date) -> Transaction | None:
         start_dt, end_dt = current_month_utc_bounds(as_of)
+        return self._first_transaction_between(plan, start_dt, end_dt)
+
+    def transaction_for_status_month(self, plan: EMIPlan, installment_month: date, as_of: date) -> Transaction | None:
+        target_month = month_start(installment_month)
+        if target_month == month_start(as_of):
+            return self.current_month_transaction(plan, as_of)
+        return self.full_month_transaction(plan, target_month)
+
+    def full_month_transaction(self, plan: EMIPlan, installment_month: date) -> Transaction | None:
+        start_dt, end_dt = full_month_utc_bounds(installment_month)
+        return self._first_transaction_between(plan, start_dt, end_dt)
+
+    def full_month_transaction_exists(self, plan: EMIPlan, installment_month: date) -> bool:
+        start_dt, end_dt = full_month_utc_bounds(installment_month)
+        return (
+            self.db.scalar(
+                select(func.count(Transaction.id)).where(
+                    Transaction.emi_plan_id == plan.id,
+                    Transaction.transaction_type == TransactionType.EXPENSE,
+                    Transaction.occurred_at >= start_dt,
+                    Transaction.occurred_at < end_dt,
+                )
+            )
+            or 0
+        ) > 0
+
+    def _first_transaction_between(self, plan: EMIPlan, start_dt: datetime, end_dt: datetime) -> Transaction | None:
         return self.db.scalars(
             select(Transaction)
             .where(
@@ -107,19 +187,6 @@ class EMIService:
             .order_by(Transaction.occurred_at, Transaction.created_at, Transaction.id)
             .limit(1)
         ).first()
-
-    def full_month_transaction_exists(self, plan: EMIPlan, installment_month: date) -> bool:
-        start_dt, end_dt = full_month_utc_bounds(installment_month)
-        return (
-            self.db.scalar(
-                select(func.count(Transaction.id)).where(
-                    Transaction.emi_plan_id == plan.id,
-                    Transaction.occurred_at >= start_dt,
-                    Transaction.occurred_at < end_dt,
-                )
-            )
-            or 0
-        ) > 0
 
     def _linked_total_before(self, plan: EMIPlan, end_dt: datetime) -> Decimal:
         result = self.db.scalar(
@@ -139,11 +206,11 @@ class EMIService:
     def _current_recognized_amount(
         self,
         plan: EMIPlan,
-        current_month: date,
+        installment_month: date,
         current_installment_amount: Decimal,
         current_transaction: Transaction | None,
     ) -> Decimal:
-        if current_month == plan.tracking_start_month and plan.setup_current_month_state in SETUP_RECOGNIZED_STATES:
+        if installment_month == plan.tracking_start_month and plan.setup_current_month_state in SETUP_RECOGNIZED_STATES:
             return current_installment_amount
         if current_transaction is not None:
             return Decimal(current_transaction.amount)
@@ -154,11 +221,11 @@ class EMIService:
         plan: EMIPlan,
         as_of: date,
         due_date: date,
-        current_month: date,
-        remaining_before_current: Decimal,
+        installment_month: date,
+        remaining_before_installment: Decimal,
         current_transaction: Transaction | None,
     ) -> str:
-        if current_month == plan.tracking_start_month:
+        if installment_month == plan.tracking_start_month:
             if plan.setup_current_month_state == EMISetupCurrentMonthState.INCLUDED_IN_OPENING_LIABILITY:
                 return "included_in_card_liability"
             if plan.setup_current_month_state == EMISetupCurrentMonthState.SETTLED_BEFORE_TRACKING:
@@ -166,7 +233,7 @@ class EMIService:
 
         if current_transaction is not None:
             return "posted"
-        if remaining_before_current <= ZERO:
+        if remaining_before_installment <= ZERO:
             return "completed"
         if as_of < due_date:
             return "upcoming"

@@ -12,6 +12,11 @@ const dateFormatter = new Intl.DateTimeFormat("en-IN", {
   year: "numeric",
 });
 
+const monthFormatter = new Intl.DateTimeFormat("en-IN", {
+  month: "long",
+  year: "numeric",
+});
+
 const timezoneSuffixPattern = /(Z|[+-]\d{2}:?\d{2})$/i;
 
 function parseApiDateTime(value: string): Date {
@@ -57,6 +62,19 @@ export function formatDate(value: string | null | undefined): string {
   }
 
   return dateFormatter.format(parsed);
+}
+
+export function formatMonth(value: string | null | undefined): string {
+  if (!value) {
+    return "Not recorded";
+  }
+
+  const parsed = parseApiDateTime(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return monthFormatter.format(parsed);
 }
 
 export function maxDateTimeLocalNow(): string {

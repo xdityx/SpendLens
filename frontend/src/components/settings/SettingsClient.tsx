@@ -18,7 +18,7 @@ import {
   getFinancialProfile,
   updateFinancialProfile,
 } from "@/lib/api";
-import { formatDate } from "@/lib/dates";
+import { formatDate, formatMonth } from "@/lib/dates";
 import { formatMoney, isValidMoneyInput, isValidNonNegativeMoneyInput } from "@/lib/money";
 import type {
   Account,
@@ -712,6 +712,10 @@ export function SettingsClient() {
                   <div>
                     <dt>Current installment</dt>
                     <dd>{formatMoney(status.current_installment_amount)}</dd>
+                  </div>
+                  <div>
+                    <dt>Installment month</dt>
+                    <dd>{formatMonth(status.installment_month)}</dd>
                   </div>
                   <div>
                     <dt>Category</dt>
