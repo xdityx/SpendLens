@@ -17,6 +17,7 @@ import {
   getErrorMessage,
   getFinancialProfile,
   updateFinancialProfile,
+  updateCommitment,
 } from "@/lib/api";
 import { formatDate, formatMonth } from "@/lib/dates";
 import { formatMoney, isValidMoneyInput, isValidNonNegativeMoneyInput } from "@/lib/money";
@@ -25,6 +26,7 @@ import type {
   Category,
   Commitment,
   CommitmentCreatePayload,
+  CommitmentUpdatePayload,
   CommitmentType,
   EMIPlanCreatePayload,
   EMIPlanStatus,
@@ -44,6 +46,15 @@ interface CommitmentFormState {
   accountId: string;
   categoryId: string;
   dueDay: string;
+}
+
+interface CommitmentEditFormState {
+  name: string;
+  amount: string;
+  accountId: string;
+  categoryId: string;
+  dueDay: string;
+  isActive: boolean;
 }
 
 interface EMIFormState {
@@ -68,6 +79,15 @@ const initialCommitmentForm: CommitmentFormState = {
   accountId: "",
   categoryId: "",
   dueDay: "",
+};
+
+const initialCommitmentEditForm: CommitmentEditFormState = {
+  name: "",
+  amount: "",
+  accountId: "",
+  categoryId: "",
+  dueDay: "",
+  isActive: true,
 };
 
 const initialEmiForm: EMIFormState = {
@@ -144,6 +164,7 @@ export function SettingsClient() {
   const [profile, setProfile] = useState<FinancialProfile | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState>(initialProfileForm);
   const [commitmentForm, setCommitmentForm] = useState<CommitmentFormState>(initialCommitmentForm);
+  const [commitmentEditForm, setCommitmentEditForm] = useState<CommitmentEditFormState>(initialCommitmentEditForm);
   const [emiForm, setEmiForm] = useState<EMIFormState>(initialEmiForm);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -151,10 +172,14 @@ export function SettingsClient() {
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
   const [commitmentError, setCommitmentError] = useState<string | null>(null);
   const [commitmentSuccess, setCommitmentSuccess] = useState<string | null>(null);
+  const [commitmentEditError, setCommitmentEditError] = useState<string | null>(null);
+  const [commitmentEditSuccess, setCommitmentEditSuccess] = useState<string | null>(null);
   const [emiError, setEmiError] = useState<string | null>(null);
   const [emiSuccess, setEmiSuccess] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [creatingCommitment, setCreatingCommitment] = useState(false);
+  const [editingCommitmentId, setEditingCommitmentId] = useState<string | null>(null);
+  const [updatingCommitmentId, setUpdatingCommitmentId] = useState<string | null>(null);
   const [creatingEmiPlan, setCreatingEmiPlan] = useState(false);
 
   const loadSettings = useCallback(async () => {
@@ -204,6 +229,17 @@ export function SettingsClient() {
   }, [activeAccounts, commitmentForm.commitmentType]);
   const accountsById = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts]);
   const categoriesById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
+  const editingCommitment = useMemo(
+    () => commitments.find((commitment) => commitment.id === editingCommitmentId) ?? null,
+    [commitments, editingCommitmentId],
+  );
+  const commitmentEditAccountOptions = useMemo(() => {
+    if (editingCommitment?.commitment_type === "investment") {
+      return activeAccounts.filter((account) => account.account_type !== "credit_card");
+    }
+
+    return activeAccounts;
+  }, [activeAccounts, editingCommitment?.commitment_type]);
 
   useEffect(() => {
     const selectedAccount = commitmentForm.accountId ? accountsById.get(commitmentForm.accountId) : undefined;
@@ -229,6 +265,62 @@ export function SettingsClient() {
     setCommitmentForm((current) => ({ ...current, [key]: value }));
     setCommitmentError(null);
     setCommitmentSuccess(null);
+  }
+
+  function updateCommitmentEditForm<K extends keyof CommitmentEditFormState>(key: K, value: CommitmentEditFormState[K]) {
+    setCommitmentEditForm((current) => ({ ...current, [key]: value }));
+    setCommitmentEditError(null);
+    setCommitmentEditSuccess(null);
+  }
+
+  function startCommitmentEdit(commitment: Commitment) {
+    setEditingCommitmentId(commitment.id);
+    setCommitmentEditForm({
+      name: commitment.name,
+      amount: String(commitment.amount),
+      accountId: commitment.account_id,
+      categoryId: commitment.category_id,
+      dueDay: String(commitment.due_day),
+      isActive: commitment.is_active,
+    });
+    setCommitmentEditError(null);
+    setCommitmentEditSuccess(null);
+    setCommitmentError(null);
+    setCommitmentSuccess(null);
+  }
+
+  function cancelCommitmentEdit() {
+    setEditingCommitmentId(null);
+    setCommitmentEditForm(initialCommitmentEditForm);
+    setCommitmentEditError(null);
+  }
+
+  function validateCommitmentFields(
+    form: Pick<CommitmentEditFormState, "name" | "amount" | "accountId" | "categoryId" | "dueDay">,
+    commitmentType: CommitmentType,
+  ): string | null {
+    if (!form.name.trim()) {
+      return "Enter a commitment name.";
+    }
+    if (!isValidMoneyInput(form.amount)) {
+      return "Enter a commitment amount like 1200 or 1200.00.";
+    }
+    if (!form.accountId) {
+      return "Choose an account.";
+    }
+    if (!form.categoryId) {
+      return "Choose a category.";
+    }
+    if (parseDay(form.dueDay) === null) {
+      return "Enter a due day from 1 to 28.";
+    }
+
+    const selectedAccount = accountsById.get(form.accountId);
+    if (commitmentType === "investment" && selectedAccount?.account_type === "credit_card") {
+      return "Credit cards cannot be used for investment commitments.";
+    }
+
+    return null;
   }
 
   function updateEmiForm<K extends keyof EMIFormState>(key: K, value: EMIFormState[K]) {
@@ -279,31 +371,6 @@ export function SettingsClient() {
     }
   }
 
-  function validateCommitmentForm(): string | null {
-    if (!commitmentForm.name.trim()) {
-      return "Enter a commitment name.";
-    }
-    if (!isValidMoneyInput(commitmentForm.amount)) {
-      return "Enter a commitment amount like 1200 or 1200.00.";
-    }
-    if (!commitmentForm.accountId) {
-      return "Choose an account.";
-    }
-    if (!commitmentForm.categoryId) {
-      return "Choose a category.";
-    }
-    if (parseDay(commitmentForm.dueDay) === null) {
-      return "Enter a due day from 1 to 28.";
-    }
-
-    const selectedAccount = accountsById.get(commitmentForm.accountId);
-    if (commitmentForm.commitmentType === "investment" && selectedAccount?.account_type === "credit_card") {
-      return "Credit cards cannot be used for investment commitments.";
-    }
-
-    return null;
-  }
-
   function validateEmiForm(): string | null {
     if (!emiForm.name.trim()) {
       return "Enter an EMI plan name.";
@@ -335,7 +402,7 @@ export function SettingsClient() {
     setCommitmentError(null);
     setCommitmentSuccess(null);
 
-    const validationError = validateCommitmentForm();
+    const validationError = validateCommitmentFields(commitmentForm, commitmentForm.commitmentType);
     const dueDay = parseDay(commitmentForm.dueDay);
     if (validationError || dueDay === null) {
       setCommitmentError(validationError ?? "Enter a due day from 1 to 28.");
@@ -357,11 +424,47 @@ export function SettingsClient() {
       await createCommitment(payload);
       setCommitmentSuccess("Recurring commitment created.");
       setCommitmentForm(initialCommitmentForm);
+      setCommitmentEditSuccess(null);
       setCommitments(await getCommitments());
     } catch (createError) {
       setCommitmentError(getErrorMessage(createError));
     } finally {
       setCreatingCommitment(false);
+    }
+  }
+
+  async function handleCommitmentEditSubmit(event: FormEvent<HTMLFormElement>, commitment: Commitment) {
+    event.preventDefault();
+    setCommitmentEditError(null);
+    setCommitmentEditSuccess(null);
+
+    const validationError = validateCommitmentFields(commitmentEditForm, commitment.commitment_type);
+    const dueDay = parseDay(commitmentEditForm.dueDay);
+    if (validationError || dueDay === null) {
+      setCommitmentEditError(validationError ?? "Enter a due day from 1 to 28.");
+      return;
+    }
+
+    const payload: CommitmentUpdatePayload = {
+      name: commitmentEditForm.name.trim(),
+      amount: commitmentEditForm.amount.trim(),
+      account_id: commitmentEditForm.accountId,
+      category_id: commitmentEditForm.categoryId,
+      due_day: dueDay,
+      is_active: commitmentEditForm.isActive,
+    };
+
+    setUpdatingCommitmentId(commitment.id);
+    try {
+      await updateCommitment(commitment.id, payload);
+      setCommitments(await getCommitments());
+      setEditingCommitmentId(null);
+      setCommitmentEditForm(initialCommitmentEditForm);
+      setCommitmentEditSuccess("Recurring commitment updated.");
+    } catch (updateError) {
+      setCommitmentEditError(getErrorMessage(updateError));
+    } finally {
+      setUpdatingCommitmentId(null);
     }
   }
 
@@ -547,6 +650,7 @@ export function SettingsClient() {
               <h2>Reserved obligations</h2>
             </div>
           </div>
+          {commitmentEditSuccess ? <p className="form-message success">{commitmentEditSuccess}</p> : null}
 
           {commitments.length === 0 ? (
             <EmptyState title="No commitments yet" message="Create fixed expenses and monthly investments to reserve them in Safe to Spend." />
@@ -554,31 +658,135 @@ export function SettingsClient() {
             <div className="card-list">
               {commitments.map((commitment) => (
                 <article className="account-card" key={commitment.id}>
-                  <div className="section-heading-row compact">
-                    <div>
-                      <h3>{commitment.name}</h3>
-                      <p>{commitmentTypeLabels[commitment.commitment_type]}</p>
-                    </div>
-                    <strong>{formatMoney(commitment.amount)}</strong>
-                  </div>
-                  <dl className="detail-grid">
-                    <div>
-                      <dt>Category</dt>
-                      <dd>{categoryName(categoriesById, commitment.category_id)}</dd>
-                    </div>
-                    <div>
-                      <dt>Account</dt>
-                      <dd>{accountName(accountsById, commitment.account_id)}</dd>
-                    </div>
-                    <div>
-                      <dt>Due day</dt>
-                      <dd>Day {commitment.due_day}</dd>
-                    </div>
-                    <div>
-                      <dt>Status</dt>
-                      <dd>{commitment.is_active ? "Active" : "Inactive"}</dd>
-                    </div>
-                  </dl>
+                  {editingCommitmentId === commitment.id ? (
+                    <>
+                      <div className="section-heading-row compact">
+                        <div>
+                          <h3>{commitment.name}</h3>
+                          <p>{commitmentTypeLabels[commitment.commitment_type]}</p>
+                        </div>
+                        <strong>{formatMoney(commitment.amount)}</strong>
+                      </div>
+                      <form className="form-grid single-column commitment-edit-form" onSubmit={(event) => handleCommitmentEditSubmit(event, commitment)}>
+                        <p className="helper-text">
+                          Editing a commitment changes its current obligation configuration. Existing transactions remain unchanged.
+                        </p>
+                        <p className="helper-text">Existing linked transactions keep their recorded account, category, and amount.</p>
+                        <div className="readonly-field">
+                          <span>Commitment type</span>
+                          <strong>{commitmentTypeLabels[commitment.commitment_type]}</strong>
+                        </div>
+                        <label>
+                          Name
+                          <input
+                            value={commitmentEditForm.name}
+                            onChange={(event) => updateCommitmentEditForm("name", event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Amount
+                          <input
+                            inputMode="decimal"
+                            value={commitmentEditForm.amount}
+                            onChange={(event) => updateCommitmentEditForm("amount", event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Account
+                          <select
+                            value={commitmentEditForm.accountId}
+                            onChange={(event) => updateCommitmentEditForm("accountId", event.target.value)}
+                            required
+                          >
+                            <option value="">Choose account</option>
+                            {commitmentEditAccountOptions.map((account) => (
+                              <option key={account.id} value={account.id}>
+                                {account.name} ({account.account_type.replace("_", " ")})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Category
+                          <select
+                            value={commitmentEditForm.categoryId}
+                            onChange={(event) => updateCommitmentEditForm("categoryId", event.target.value)}
+                            required
+                          >
+                            <option value="">Choose category</option>
+                            {categories.map((category) => (
+                              <option key={category.id} value={category.id}>
+                                {category.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Due day
+                          <input
+                            type="number"
+                            min={1}
+                            max={28}
+                            value={commitmentEditForm.dueDay}
+                            onChange={(event) => updateCommitmentEditForm("dueDay", event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={commitmentEditForm.isActive}
+                            onChange={(event) => updateCommitmentEditForm("isActive", event.target.checked)}
+                          />
+                          Active
+                        </label>
+                        {commitmentEditError ? <p className="form-message error">{commitmentEditError}</p> : null}
+                        <div className="form-actions button-row">
+                          <button className="primary-button" type="submit" disabled={updatingCommitmentId === commitment.id}>
+                            {updatingCommitmentId === commitment.id ? "Saving..." : "Save changes"}
+                          </button>
+                          <button className="secondary-button" type="button" onClick={cancelCommitmentEdit}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </>
+                  ) : (
+                    <>
+                      <div className="section-heading-row compact">
+                        <div>
+                          <h3>{commitment.name}</h3>
+                          <p>{commitmentTypeLabels[commitment.commitment_type]}</p>
+                        </div>
+                        <div className="card-heading-actions">
+                          <strong>{formatMoney(commitment.amount)}</strong>
+                          <button className="secondary-button" type="button" onClick={() => startCommitmentEdit(commitment)}>
+                            Edit
+                          </button>
+                        </div>
+                      </div>
+                      <dl className="detail-grid">
+                        <div>
+                          <dt>Category</dt>
+                          <dd>{categoryName(categoriesById, commitment.category_id)}</dd>
+                        </div>
+                        <div>
+                          <dt>Account</dt>
+                          <dd>{accountName(accountsById, commitment.account_id)}</dd>
+                        </div>
+                        <div>
+                          <dt>Due day</dt>
+                          <dd>Day {commitment.due_day}</dd>
+                        </div>
+                        <div>
+                          <dt>Status</dt>
+                          <dd>{commitment.is_active ? "Active" : "Inactive"}</dd>
+                        </div>
+                      </dl>
+                    </>
+                  )}
                 </article>
               ))}
             </div>

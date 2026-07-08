@@ -394,6 +394,22 @@ p {
   padding: 14px;
 }
 
+.card-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.card-heading-actions .secondary-button {
+  min-height: 36px;
+}
+
+.commitment-edit-form {
+  margin-top: 12px;
+}
+
 .transaction-row {
   display: flex;
   gap: 12px;
@@ -533,6 +549,26 @@ label {
   font-weight: 700;
 }
 
+.readonly-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: #09131e;
+}
+
+.readonly-field span {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.readonly-field strong {
+  color: var(--text);
+}
+
 input,
 select,
 textarea {
@@ -543,6 +579,18 @@ textarea {
   padding: 10px 12px;
   background: #09131e;
   color: var(--text);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
 }
 
 textarea {
@@ -556,8 +604,14 @@ textarea {
   min-width: 0;
 }
 
+.panel > .form-message {
+  margin-bottom: 12px;
+}
+
 .form-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   justify-content: flex-start;
 }
 

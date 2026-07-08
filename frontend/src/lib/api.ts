@@ -5,6 +5,7 @@ import type {
   Commitment,
   CommitmentCreatePayload,
   CommitmentStatus,
+  CommitmentUpdatePayload,
   CreditCardExposure,
   DashboardSummary,
   EMIPlan,
@@ -180,6 +181,13 @@ export function getCommitments(): Promise<Commitment[]> {
 export function createCommitment(payload: CommitmentCreatePayload): Promise<Commitment> {
   return request<Commitment>("/api/v1/commitments", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateCommitment(commitmentId: string, payload: CommitmentUpdatePayload): Promise<Commitment> {
+  return request<Commitment>(`/api/v1/commitments/${commitmentId}`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }

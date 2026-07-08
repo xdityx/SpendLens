@@ -112,6 +112,15 @@ export interface CommitmentCreatePayload {
   is_active?: boolean;
 }
 
+export interface CommitmentUpdatePayload {
+  name: string;
+  amount: string;
+  category_id: string;
+  account_id: string;
+  due_day: number;
+  is_active: boolean;
+}
+
 export interface CommitmentStatus {
   commitment_id: string;
   name: string;

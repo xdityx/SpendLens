@@ -29,6 +29,8 @@ Commitment payment state is derived from the ledger and is not stored as a mutab
 
 Investment transactions do not fulfill fixed-expense commitments. Existing linked-transaction validation still requires the transaction account, category, and type to match the recurring commitment.
 
+Recurring commitments can be corrected or deactivated. Editing a commitment changes its current obligation configuration but does not rewrite existing linked transactions.
+
 ## EMI Plans
 
 Credit-card EMIs are tracked as EMI plans, separate from recurring commitments. This avoids mixing two different concepts:
