@@ -33,15 +33,6 @@ export class ApiError extends Error {
   }
 }
 
-function apiBaseUrl(): string {
-  const value = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!value) {
-    throw new ApiError("NEXT_PUBLIC_API_BASE_URL is not configured. Set it to the browser-facing FastAPI URL.");
-  }
-
-  return value.replace(/\/$/, "");
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -95,7 +86,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   headers.set("Accept", "application/json");
 
   try {
-    response = await fetch(`${apiBaseUrl()}${path}`, {
+    response = await fetch(path, {
       ...init,
       headers,
       cache: "no-store",
@@ -111,6 +102,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await readResponseBody(response);
 
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined" && window.location.pathname !== "/login") {
+      window.location.assign("/login");
+    }
     const detail = isRecord(body) && "detail" in body ? body.detail : body;
     throw new ApiError(detailMessage(detail), response.status, detail);
   }

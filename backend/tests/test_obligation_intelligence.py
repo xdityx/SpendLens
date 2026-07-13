@@ -730,7 +730,7 @@ def test_backfill_is_rejected_when_later_emi_transaction_already_exists(db_sessi
 
     app.dependency_overrides[get_db] = override_get_db
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers={"Authorization": "Bearer spendlens-local-development-api-token"}) as client:
             response = client.post(
                 "/api/v1/transactions",
                 json={

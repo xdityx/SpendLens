@@ -22,6 +22,8 @@ services:
       DATABASE_URL: postgresql+psycopg://spendlens:spendlens@db:5432/spendlens
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       APP_TIMEZONE: Asia/Kolkata
+      APP_ENVIRONMENT: development
+      SPENDLENS_API_TOKEN: ${SPENDLENS_API_TOKEN:-spendlens-local-development-api-token}
     depends_on:
       db:
         condition: service_healthy
@@ -33,7 +35,11 @@ services:
     build:
       context: ./frontend
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      API_BASE_URL: http://api:8000
+      SPENDLENS_API_TOKEN: ${SPENDLENS_API_TOKEN:-spendlens-local-development-api-token}
+      SPENDLENS_LOGIN_PASSWORD: ${SPENDLENS_LOGIN_PASSWORD:-spendlens-local}
+      SPENDLENS_SESSION_SECRET: ${SPENDLENS_SESSION_SECRET:-spendlens-local-development-session-secret}
+      SPENDLENS_COOKIE_SECURE: "false"
     depends_on:
       - api
     ports:

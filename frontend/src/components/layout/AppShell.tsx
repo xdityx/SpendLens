@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 const navItems = [
@@ -25,6 +26,62 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const isLoginRoute = pathname === "/login";
+  const [authState, setAuthState] = useState<"checking" | "authenticated" | "unauthenticated">("checking");
+
+  useEffect(() => {
+    if (isLoginRoute) {
+      return;
+    }
+
+    let active = true;
+    void fetch("/api/auth/session", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as { authenticated?: boolean };
+        if (!active) {
+          return;
+        }
+
+        if (response.ok && body.authenticated) {
+          setAuthState("authenticated");
+          return;
+        }
+
+        setAuthState("unauthenticated");
+        router.replace("/login");
+      })
+      .catch(() => {
+        if (active) {
+          setAuthState("unauthenticated");
+          router.replace("/login");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isLoginRoute, router]);
+
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setAuthState("unauthenticated");
+    router.replace("/login");
+    router.refresh();
+  }
+
+  if (isLoginRoute) {
+    return <main className="login-page">{children}</main>;
+  }
+
+  if (authState !== "authenticated") {
+    return (
+      <main className="auth-loading">
+        <span className="brand-mark">SL</span>
+        <p>Checking private access...</p>
+      </main>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -48,9 +105,14 @@ export function AppShell({ children }: AppShellProps) {
             </Link>
           ))}
         </nav>
-        <Link className="primary-button sidebar-action" href="/transactions?add=transaction">
-          Add Transaction
-        </Link>
+        <div className="sidebar-actions">
+          <Link className="primary-button" href="/transactions?add=transaction">
+            Add Transaction
+          </Link>
+          <button className="secondary-button" onClick={() => void signOut()} type="button">
+            Sign out
+          </button>
+        </div>
       </aside>
 
       <div className="mobile-header">
@@ -58,6 +120,9 @@ export function AppShell({ children }: AppShellProps) {
           <span className="brand-mark">SL</span>
           <span>SpendLens</span>
         </Link>
+        <button className="secondary-button compact-button" onClick={() => void signOut()} type="button">
+          Sign out
+        </button>
       </div>
 
       <main className="main-content">{children}</main>

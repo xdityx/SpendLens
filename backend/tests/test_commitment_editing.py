@@ -32,7 +32,7 @@ def api_client_for_session(db_session: Session) -> Generator[TestClient, None, N
 
     app.dependency_overrides[get_db] = override_get_db
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers={"Authorization": "Bearer spendlens-local-development-api-token"}) as client:
             yield client
     finally:
         app.dependency_overrides.pop(get_db, None)

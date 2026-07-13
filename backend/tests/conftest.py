@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+os.environ.setdefault("SPENDLENS_API_TOKEN", "spendlens-local-development-api-token")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.database import get_db  # noqa: E402
@@ -47,7 +48,7 @@ def api_client() -> Generator[TestClient, None, None]:
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as client:
+    with TestClient(app, headers={"Authorization": "Bearer spendlens-local-development-api-token"}) as client:
         yield client
     app.dependency_overrides.pop(get_db, None)
 

@@ -1246,3 +1246,50 @@ textarea {
     align-items: flex-start;
   }
 }
+.login-page,
+.auth-loading {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-loading {
+  align-content: center;
+  gap: 12px;
+}
+
+.auth-loading p {
+  font-weight: 700;
+}
+
+.login-panel {
+  display: grid;
+  width: min(100%, 420px);
+  gap: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.login-brand h1 {
+  margin-bottom: 0;
+}
+
+.sidebar-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.sidebar-actions > * {
+  width: 100%;
+}

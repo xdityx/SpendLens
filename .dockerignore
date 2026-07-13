@@ -1,0 +1,14 @@
+.git
+.github
+.next
+node_modules
+**/.next
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.env
+**/.env.*
+!.env.example
+*.pyc
+*.pyo
+*.dump

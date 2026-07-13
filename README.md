@@ -87,22 +87,13 @@ Application routes:
 
 ## Environment Variables
 
-Root `.env` for FastAPI:
+FastAPI requires DATABASE_URL, APP_TIMEZONE, APP_ENVIRONMENT, and SPENDLENS_API_TOKEN.
 
-```text
-DATABASE_URL=postgresql+psycopg://spendlens:spendlens@localhost:5432/spendlens
-CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-APP_TIMEZONE=Asia/Kolkata
-```
+Next.js requires API_BASE_URL, the matching SPENDLENS_API_TOKEN, SPENDLENS_LOGIN_PASSWORD, and SPENDLENS_SESSION_SECRET.
 
-Frontend `.env.local`:
+The browser calls same-origin /api/v1 routes. Next.js validates the HttpOnly login session, proxies requests to API_BASE_URL, and injects SPENDLENS_API_TOKEN server-side. See .env.example for local values.
 
-```text
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
-```
-
-`NEXT_PUBLIC_API_BASE_URL` must be the browser-facing FastAPI base URL. In Docker Compose it is set to `http://localhost:8000`, not `http://api:8000`, because browser requests resolve from the host.
-
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the Railway service layout, private networking, variables, and data migration checklist.
 ## Timezone Contract
 
 `APP_TIMEZONE` defines the application financial calendar. The default is `Asia/Kolkata`.
@@ -209,7 +200,7 @@ A transaction may link to either a recurring commitment or an EMI plan, never bo
 
 The transaction list excludes voided records by default. Pass `include_voided=true` to include the audit history. An earlier EMI installment cannot be moved, unlinked, or voided while a later active installment exists.
 
-Apply Alembic migration `20260713_0003` before using transaction corrections against an existing database.
+Apply Alembic migration 20260714_0004 before using statement tracking against an existing database.
 
 ## Credit Card Handling
 
@@ -231,6 +222,7 @@ Financial exposure reports liability as `max(raw_outstanding, 0)`. If a card is 
 - `POST /api/v1/accounts`
 - `GET /api/v1/accounts`
 - `GET /api/v1/accounts/{account_id}`
+- PUT /api/v1/accounts/{account_id}/statement
 - `POST /api/v1/categories`
 - `GET /api/v1/categories`
 - `POST /api/v1/transactions`
