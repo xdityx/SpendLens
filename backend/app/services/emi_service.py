@@ -98,7 +98,7 @@ class EMIService:
     def linked_transaction_exists(self, plan: EMIPlan) -> bool:
         return (
             self.db.scalar(
-                select(func.count(Transaction.id)).where(Transaction.emi_plan_id == plan.id)
+                select(func.count(Transaction.id)).where(Transaction.voided_at.is_(None), Transaction.emi_plan_id == plan.id)
             )
             or 0
         ) > 0
@@ -159,6 +159,7 @@ class EMIService:
         return (
             self.db.scalar(
                 select(func.count(Transaction.id)).where(
+                    Transaction.voided_at.is_(None),
                     Transaction.emi_plan_id == plan.id,
                     Transaction.transaction_type == TransactionType.EXPENSE,
                     Transaction.occurred_at >= later_start,
@@ -186,6 +187,7 @@ class EMIService:
         return (
             self.db.scalar(
                 select(func.count(Transaction.id)).where(
+                    Transaction.voided_at.is_(None),
                     Transaction.emi_plan_id == plan.id,
                     Transaction.transaction_type == TransactionType.EXPENSE,
                     Transaction.occurred_at >= start_dt,
@@ -199,6 +201,7 @@ class EMIService:
         return self.db.scalars(
             select(Transaction)
             .where(
+                Transaction.voided_at.is_(None),
                 Transaction.emi_plan_id == plan.id,
                 Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.occurred_at >= start_dt,
@@ -211,6 +214,7 @@ class EMIService:
     def _linked_total_before(self, plan: EMIPlan, end_dt: datetime) -> Decimal:
         result = self.db.scalar(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.voided_at.is_(None),
                 Transaction.emi_plan_id == plan.id,
                 Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.occurred_at < end_dt,

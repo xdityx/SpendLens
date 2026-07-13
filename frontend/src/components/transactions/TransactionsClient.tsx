@@ -16,8 +16,10 @@ import {
   getEmiPlanStatuses,
   getErrorMessage,
   getTransactions,
+  updateTransaction,
+  voidTransaction,
 } from "@/lib/api";
-import { formatDateTime, formatMonth, localDateTimeInputToUtcIso, maxDateTimeLocalNow } from "@/lib/dates";
+import { apiDateTimeToLocalInput, formatDateTime, formatMonth, localDateTimeInputToUtcIso, maxDateTimeLocalNow } from "@/lib/dates";
 import { formatMoney, isValidMoneyInput, moneyToNumber, transactionAmountDisplay } from "@/lib/money";
 import type {
   Account,
@@ -31,6 +33,7 @@ import type {
   TransactionCreatePayload,
   TransactionFilters,
   TransactionType,
+  TransactionUpdatePayload,
 } from "@/lib/types";
 
 interface TransactionFormState {
@@ -52,6 +55,7 @@ interface FilterState {
   categoryId: string;
   dateFrom: string;
   dateTo: string;
+  recordStatus: "active" | "all" | "voided";
 }
 
 const transactionTypeLabels: Record<TransactionType, string> = {
@@ -81,6 +85,7 @@ const initialFilters: FilterState = {
   categoryId: "",
   dateFrom: "",
   dateTo: "",
+  recordStatus: "active",
 };
 
 function labelForType(type: TransactionType): string {
@@ -125,6 +130,7 @@ function filtersToQuery(filters: FilterState): TransactionFilters {
     category_id: filters.categoryId || undefined,
     date_from: filters.dateFrom || undefined,
     date_to: filters.dateTo || undefined,
+    include_voided: filters.recordStatus === "active" ? undefined : true,
   };
 }
 
@@ -182,6 +188,11 @@ export function TransactionsClient() {
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [prefillNotice, setPrefillNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
+  const [voidingTransactionId, setVoidingTransactionId] = useState<string | null>(null);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
+  const [correctionSuccess, setCorrectionSuccess] = useState<string | null>(null);
+  const [maxOccurredAt, setMaxOccurredAt] = useState<string>();
   const amountInputRef = useRef<HTMLInputElement>(null);
   const formPanelRef = useRef<HTMLElement>(null);
   const prefillAppliedRef = useRef(false);
@@ -218,7 +229,12 @@ export function TransactionsClient() {
     setTransactionsError(null);
 
     try {
-      setTransactions(await getTransactions(filtersToQuery(filters)));
+      const loadedTransactions = await getTransactions(filtersToQuery(filters));
+      setTransactions(
+        filters.recordStatus === "voided"
+          ? loadedTransactions.filter((transaction) => transaction.voided_at !== null)
+          : loadedTransactions,
+      );
     } catch (error) {
       setTransactionsError(getErrorMessage(error));
     } finally {
@@ -234,24 +250,35 @@ export function TransactionsClient() {
     void loadTransactions();
   }, [loadTransactions]);
 
+  useEffect(() => {
+    const updateMaximum = () => setMaxOccurredAt(maxDateTimeLocalNow());
+    updateMaximum();
+    const intervalId = window.setInterval(updateMaximum, 60_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const editingTransaction = useMemo(
+    () => transactions.find((transaction) => transaction.id === editingTransactionId),
+    [editingTransactionId, transactions],
+  );
   const activeAccounts = useMemo(() => accounts.filter((account) => account.is_active), [accounts]);
+  const selectableAccounts = editingTransactionId ? accounts : activeAccounts;
   const nonCreditAccounts = useMemo(
-    () => activeAccounts.filter((account) => account.account_type !== "credit_card"),
-    [activeAccounts],
+    () => selectableAccounts.filter((account) => account.account_type !== "credit_card"),
+    [selectableAccounts],
   );
   const sourceOptions = useMemo(() => {
     if (form.transactionType === "transfer" || form.transactionType === "investment") {
       return nonCreditAccounts;
     }
-    return activeAccounts;
-  }, [activeAccounts, form.transactionType, nonCreditAccounts]);
+    return selectableAccounts;
+  }, [form.transactionType, nonCreditAccounts, selectableAccounts]);
   const destinationOptions = useMemo(() => {
     if (form.transactionType === "income") {
       return nonCreditAccounts;
     }
-    return activeAccounts;
-  }, [activeAccounts, form.transactionType, nonCreditAccounts]);
-
+    return selectableAccounts;
+  }, [form.transactionType, nonCreditAccounts, selectableAccounts]);
   const accountsById = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts]);
   const categoriesById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const commitmentsById = useMemo(() => new Map(commitments.map((commitment) => [commitment.id, commitment])), [commitments]);
@@ -266,12 +293,12 @@ export function TransactionsClient() {
 
     return commitments.filter(
       (commitment) =>
-        commitment.is_active &&
+        (commitment.is_active || commitment.id === editingTransaction?.recurring_commitment_id) &&
         commitment.commitment_type === requiredType &&
         commitment.account_id === form.sourceAccountId &&
         commitment.category_id === form.categoryId,
     );
-  }, [commitments, form.categoryId, form.emiPlanId, form.sourceAccountId, form.transactionType]);
+  }, [commitments, editingTransaction?.recurring_commitment_id, form.categoryId, form.emiPlanId, form.sourceAccountId, form.transactionType]);
 
   const compatibleEmiStatuses = useMemo(() => {
     if (form.transactionType !== "expense" || !form.sourceAccountId || !form.categoryId || form.recurringCommitmentId) {
@@ -280,12 +307,12 @@ export function TransactionsClient() {
 
     return emiStatuses.filter(
       (status) =>
-        status.is_active &&
-        canRecordEmiInstallment(status.current_month_status) &&
+        ((status.is_active && canRecordEmiInstallment(status.current_month_status)) ||
+          status.emi_plan_id === editingTransaction?.emi_plan_id) &&
         status.account_id === form.sourceAccountId &&
         status.category_id === form.categoryId,
     );
-  }, [emiStatuses, form.categoryId, form.recurringCommitmentId, form.sourceAccountId, form.transactionType]);
+  }, [editingTransaction?.emi_plan_id, emiStatuses, form.categoryId, form.recurringCommitmentId, form.sourceAccountId, form.transactionType]);
 
   const selectedEmiStatus = useMemo(
     () => emiStatuses.find((status) => status.emi_plan_id === form.emiPlanId),
@@ -402,6 +429,70 @@ export function TransactionsClient() {
     setPrefillNotice(null);
   }
 
+  function startTransactionEdit(transaction: Transaction) {
+    if (transaction.voided_at) {
+      return;
+    }
+
+    setEditingTransactionId(transaction.id);
+    setForm({
+      transactionType: transaction.transaction_type,
+      amount: String(transaction.amount),
+      sourceAccountId: transaction.source_account_id ?? "",
+      destinationAccountId: transaction.destination_account_id ?? "",
+      categoryId: transaction.category_id ?? "",
+      recurringCommitmentId: transaction.recurring_commitment_id ?? "",
+      emiPlanId: transaction.emi_plan_id ?? "",
+      merchant: transaction.merchant ?? "",
+      description: transaction.description ?? "",
+      occurredAt: apiDateTimeToLocalInput(transaction.occurred_at),
+    });
+    setSubmitError(null);
+    setSubmitSuccess(null);
+    setPrefillNotice(null);
+    setCorrectionError(null);
+    setCorrectionSuccess(null);
+    window.requestAnimationFrame(() => {
+      formPanelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      amountInputRef.current?.focus();
+    });
+  }
+
+  function cancelTransactionEdit() {
+    setEditingTransactionId(null);
+    setForm(initialForm);
+    setSubmitError(null);
+    setSubmitSuccess(null);
+    setPrefillNotice(null);
+  }
+
+  async function handleVoidTransaction(transaction: Transaction) {
+    const label = displayLabel(transaction, commitmentsById, emiPlansById);
+    const confirmed = window.confirm(
+      'Void "' + label + '"? It will stop affecting balances, obligations, EMI recognition, and Safe to Spend, but remain in the audit history.',
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setVoidingTransactionId(transaction.id);
+    setCorrectionError(null);
+    setCorrectionSuccess(null);
+    try {
+      await voidTransaction(transaction.id);
+      if (editingTransactionId === transaction.id) {
+        setEditingTransactionId(null);
+        setForm(initialForm);
+      }
+      setCorrectionSuccess("Transaction voided. Financial totals have been recalculated.");
+      await Promise.all([loadTransactions(), loadLookups()]);
+    } catch (error) {
+      setCorrectionError(getErrorMessage(error));
+    } finally {
+      setVoidingTransactionId(null);
+    }
+  }
+
   function validateForm(): string | null {
     if (!isValidMoneyInput(form.amount)) {
       return "Enter a rupee amount like 123 or 123.45.";
@@ -431,6 +522,10 @@ export function TransactionsClient() {
       return "Choose either a recurring commitment or an EMI plan, not both.";
     }
 
+    if (editingTransactionId && !form.occurredAt) {
+      return "An occurred-at date and time is required when editing a transaction.";
+    }
+
     return null;
   }
 
@@ -438,6 +533,8 @@ export function TransactionsClient() {
     event.preventDefault();
     setSubmitError(null);
     setSubmitSuccess(null);
+    setCorrectionError(null);
+    setCorrectionSuccess(null);
 
     const validationError = validateForm();
     if (validationError) {
@@ -476,8 +573,10 @@ export function TransactionsClient() {
     if (form.description.trim()) {
       payload.description = form.description.trim();
     }
+
+    let occurredAtIso: string | null;
     try {
-      const occurredAtIso = localDateTimeInputToUtcIso(form.occurredAt);
+      occurredAtIso = localDateTimeInputToUtcIso(form.occurredAt);
       if (occurredAtIso) {
         payload.occurred_at = occurredAtIso;
       }
@@ -488,20 +587,30 @@ export function TransactionsClient() {
 
     setSubmitting(true);
     try {
-      await createTransaction(payload);
-      setSubmitSuccess("Transaction recorded.");
+      if (editingTransactionId) {
+        const updatePayload: TransactionUpdatePayload = {
+          ...payload,
+          occurred_at: occurredAtIso as string,
+        };
+        await updateTransaction(editingTransactionId, updatePayload);
+        setEditingTransactionId(null);
+        setForm(initialForm);
+        setSubmitSuccess("Transaction updated. Financial totals have been recalculated.");
+      } else {
+        await createTransaction(payload);
+        setSubmitSuccess("Transaction recorded.");
+        setForm((current) => ({
+          ...current,
+          amount: "",
+          merchant: "",
+          description: "",
+          occurredAt: "",
+          recurringCommitmentId: "",
+          emiPlanId: "",
+        }));
+      }
       setPrefillNotice(null);
-      setForm((current) => ({
-        ...current,
-        amount: "",
-        merchant: "",
-        description: "",
-        occurredAt: "",
-        recurringCommitmentId: "",
-        emiPlanId: "",
-      }));
-      await loadTransactions();
-      await loadLookups();
+      await Promise.all([loadTransactions(), loadLookups()]);
     } catch (error) {
       setSubmitError(getErrorMessage(error));
     } finally {
@@ -531,9 +640,14 @@ export function TransactionsClient() {
       <section className="panel form-panel" ref={formPanelRef}>
         <div className="section-heading-row">
           <div>
-            <p className="eyebrow">Add transaction</p>
-            <h2>Record activity</h2>
+            <p className="eyebrow">{editingTransactionId ? "Edit transaction" : "Add transaction"}</p>
+            <h2>{editingTransactionId ? "Correct recorded activity" : "Record activity"}</h2>
           </div>
+          {editingTransactionId ? (
+            <button className="secondary-button" type="button" onClick={cancelTransactionEdit}>
+              Cancel edit
+            </button>
+          ) : null}
         </div>
 
         {lookupsLoading ? <LoadingState label="Loading accounts and categories" rows={2} /> : null}
@@ -677,7 +791,7 @@ export function TransactionsClient() {
             Occurred at
             <input
               type="datetime-local"
-              max={maxDateTimeLocalNow()}
+              max={maxOccurredAt}
               value={form.occurredAt}
               onChange={(event) => updateForm("occurredAt", event.target.value)}
             />
@@ -687,7 +801,13 @@ export function TransactionsClient() {
 
           {selectedEmiStatus ? (
             <p className="helper-text form-wide">
-              This EMI installment is for {formatMonth(selectedEmiStatus.installment_month)}. Enter the date it posted to the credit card. Paying the card bill remains a separate bank-to-card transfer.
+              {editingTransactionId ? (
+                "This transaction is linked to an EMI plan. Amount or posting-month changes must preserve installment chronology."
+              ) : (
+                <>
+                  This EMI installment is for {formatMonth(selectedEmiStatus.installment_month)}. Enter the date it posted to the credit card. Paying the card bill remains a separate bank-to-card transfer.
+                </>
+              )}
             </p>
           ) : null}
 
@@ -700,8 +820,19 @@ export function TransactionsClient() {
 
           <div className="form-actions form-wide">
             <button className="primary-button" type="submit" disabled={submitting || lookupsLoading || Boolean(lookupsError)}>
-              {submitting ? "Recording..." : "Record Transaction"}
+              {submitting
+                ? editingTransactionId
+                  ? "Saving..."
+                  : "Recording..."
+                : editingTransactionId
+                  ? "Save changes"
+                  : "Record transaction"}
             </button>
+            {editingTransactionId ? (
+              <button className="secondary-button" type="button" onClick={cancelTransactionEdit} disabled={submitting}>
+                Cancel
+              </button>
+            ) : null}
           </div>
         </form>
       </section>
@@ -755,6 +886,17 @@ export function TransactionsClient() {
             </select>
           </label>
           <label>
+            Record status
+            <select
+              value={filters.recordStatus}
+              onChange={(event) => updateFilter("recordStatus", event.target.value as FilterState["recordStatus"])}
+            >
+              <option value="active">Active only</option>
+              <option value="all">All including voided</option>
+              <option value="voided">Voided only</option>
+            </select>
+          </label>
+          <label>
             Date from
             <input type="date" value={filters.dateFrom} onChange={(event) => updateFilter("dateFrom", event.target.value)} />
           </label>
@@ -764,6 +906,8 @@ export function TransactionsClient() {
           </label>
         </div>
 
+        {correctionError ? <p className="form-message error">{correctionError}</p> : null}
+        {correctionSuccess ? <p className="form-message success">{correctionSuccess}</p> : null}
         {transactionsLoading ? <LoadingState label="Loading transactions" rows={4} /> : null}
         {transactionsError ? <ErrorState message={transactionsError} onRetry={loadTransactions} /> : null}
         {!transactionsLoading && !transactionsError && transactions.length === 0 ? (
@@ -776,7 +920,7 @@ export function TransactionsClient() {
         ) : null}
         {!transactionsLoading && !transactionsError && transactions.length > 0 ? (
           <div className="table-wrap">
-            <table className="data-table">
+            <table className="data-table transaction-history-table">
               <thead>
                 <tr>
                   <th>Date/time</th>
@@ -785,22 +929,49 @@ export function TransactionsClient() {
                   <th>Category</th>
                   <th>Account context</th>
                   <th className="numeric-cell">Amount</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {transactions.map((transaction) => {
                   const amount = transactionAmountDisplay(transaction.transaction_type, transaction.amount);
+                  const isVoided = transaction.voided_at !== null;
                   return (
-                    <tr key={transaction.id}>
+                    <tr key={transaction.id} className={isVoided ? "voided-transaction-row" : undefined}>
                       <td>{formatDateTime(transaction.occurred_at)}</td>
                       <td>
                         <strong>{displayLabel(transaction, commitmentsById, emiPlansById)}</strong>
+                        {isVoided ? <span className="status-badge voided-badge">Voided</span> : null}
                         <span className="table-subtext">{transactionSecondary(transaction, accountsById, categoriesById)}</span>
                       </td>
                       <td>{labelForType(transaction.transaction_type)}</td>
                       <td>{categoryName(categoriesById, transaction.category_id)}</td>
                       <td>{accountContext(transaction, accountsById)}</td>
-                      <td className={`numeric-cell amount ${amount.tone}`}>{amount.label}</td>
+                      <td className={"numeric-cell amount " + amount.tone + (isVoided ? " voided-amount" : "")}>{amount.label}</td>
+                      <td>
+                        {isVoided ? (
+                          <span className="table-subtext">Voided {formatDateTime(transaction.voided_at)}</span>
+                        ) : (
+                          <div className="transaction-actions">
+                            <button
+                              className="secondary-button compact-button"
+                              type="button"
+                              onClick={() => startTransactionEdit(transaction)}
+                              disabled={voidingTransactionId === transaction.id}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="danger-button compact-button"
+                              type="button"
+                              onClick={() => void handleVoidTransaction(transaction)}
+                              disabled={voidingTransactionId === transaction.id}
+                            >
+                              {voidingTransactionId === transaction.id ? "Voiding..." : "Void"}
+                            </button>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

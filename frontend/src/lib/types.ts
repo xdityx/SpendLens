@@ -30,6 +30,9 @@ export interface Account {
   credit_limit: MoneyValue | null;
   billing_day: number | null;
   due_day: number | null;
+  statement_balance: MoneyValue;
+  statement_due_date: string | null;
+  statement_balance_as_of: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -43,7 +46,14 @@ export interface AccountCreatePayload {
   credit_limit?: string | null;
   billing_day?: number | null;
   due_day?: number | null;
+  statement_balance?: string;
+  statement_due_date?: string | null;
   is_active?: boolean;
+}
+
+export interface CardStatementUpdatePayload {
+  statement_balance: string;
+  statement_due_date: string | null;
 }
 
 export interface Category {
@@ -66,6 +76,8 @@ export interface Transaction {
   description: string | null;
   occurred_at: string;
   created_at: string;
+  updated_at: string;
+  voided_at: string | null;
 }
 
 export interface TransactionCreatePayload {
@@ -81,12 +93,17 @@ export interface TransactionCreatePayload {
   occurred_at?: string | null;
 }
 
+export type TransactionUpdatePayload = Omit<TransactionCreatePayload, "occurred_at"> & {
+  occurred_at: string;
+};
+
 export interface TransactionFilters {
   account_id?: string;
   transaction_type?: TransactionType;
   category_id?: string;
   date_from?: string;
   date_to?: string;
+  include_voided?: boolean;
 }
 
 export interface Commitment {
@@ -208,6 +225,9 @@ export interface FinancialProfilePayload {
 export interface DashboardSummary {
   liquid_cash: MoneyValue;
   credit_card_liability: MoneyValue;
+  statement_balance_due: MoneyValue;
+  unbilled_card_liability: MoneyValue;
+  due_soon_cash_position: MoneyValue;
   remaining_fixed_commitments: MoneyValue;
   remaining_emi_installments: MoneyValue;
   monthly_savings_target: MoneyValue;
@@ -225,6 +245,12 @@ export interface CreditCardExposure {
   available_credit: MoneyValue;
   utilization_percentage: MoneyValue;
   current_cycle_spend: MoneyValue;
+  statement_balance_due: MoneyValue;
+  statement_due_date: string | null;
+  statement_balance_as_of: string | null;
+  unbilled_balance: MoneyValue;
+  cycle_start_date: string;
+  cycle_end_date: string;
   billing_day: number;
   due_day: number;
 }

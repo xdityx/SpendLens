@@ -74,7 +74,7 @@ class BalanceService:
         return sum((balance for balance in balances if balance > ZERO), ZERO)
 
     def _sum_transactions(self, *criteria: object, as_of: date | None = None) -> Decimal:
-        statement = select(func.coalesce(func.sum(Transaction.amount), 0)).where(*criteria)
+        statement = select(func.coalesce(func.sum(Transaction.amount), 0)).where(Transaction.voided_at.is_(None), *criteria)
         if as_of is not None:
             statement = statement.where(Transaction.occurred_at < app_date_end_exclusive_utc_naive(as_of))
         result = self.db.scalar(statement)

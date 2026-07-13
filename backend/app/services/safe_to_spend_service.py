@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.financial_profile import FinancialProfile
 from app.models.transaction import Transaction, TransactionType
 from app.services.balance_service import BalanceService, ZERO
+from app.services.card_service import CardService
 from app.services.commitment_status_service import CommitmentStatusService
 from app.services.date_utils import current_app_date, current_month_utc_bounds
 from app.services.emi_service import EMIService
@@ -16,6 +17,7 @@ class SafeToSpendService:
     def __init__(self, db: Session):
         self.db = db
         self.balance_service = BalanceService(db)
+        self.card_service = CardService(db)
         self.commitment_status_service = CommitmentStatusService(db)
         self.emi_service = EMIService(db)
 
@@ -27,6 +29,8 @@ class SafeToSpendService:
         remaining_savings_target = max(monthly_savings_target - savings_completed, ZERO)
         liquid_cash = self.balance_service.liquid_cash(calculation_date)
         credit_card_liability = self.balance_service.total_credit_card_liability(calculation_date)
+        statement_balance_due = self.card_service.total_statement_balance_due(calculation_date)
+        unbilled_card_liability = max(credit_card_liability - statement_balance_due, ZERO)
         remaining_fixed_commitments = self._remaining_fixed_commitments(calculation_date)
         remaining_emi_installments = self._remaining_emi_installments(calculation_date)
         safe_to_spend = (
@@ -36,10 +40,20 @@ class SafeToSpendService:
             - remaining_emi_installments
             - remaining_savings_target
         )
+        due_soon_cash_position = (
+            liquid_cash
+            - statement_balance_due
+            - remaining_fixed_commitments
+            - remaining_emi_installments
+            - remaining_savings_target
+        )
 
         return {
             "liquid_cash": liquid_cash,
             "credit_card_liability": credit_card_liability,
+            "statement_balance_due": statement_balance_due,
+            "unbilled_card_liability": unbilled_card_liability,
+            "due_soon_cash_position": due_soon_cash_position,
             "remaining_fixed_commitments": remaining_fixed_commitments,
             "remaining_emi_installments": remaining_emi_installments,
             "monthly_savings_target": monthly_savings_target,
@@ -56,6 +70,7 @@ class SafeToSpendService:
         start_dt, end_dt = current_month_utc_bounds(as_of)
         result = self.db.scalar(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.voided_at.is_(None),
                 Transaction.transaction_type == TransactionType.INVESTMENT,
                 Transaction.occurred_at >= start_dt,
                 Transaction.occurred_at < end_dt,

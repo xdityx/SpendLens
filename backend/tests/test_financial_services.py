@@ -237,41 +237,60 @@ def test_future_salary_transaction_is_not_included_in_safe_to_spend(db_session: 
     assert summary["safe_to_spend"] == D("100.00")
 
 
-def test_card_billing_cycle_before_billing_day(db_session: Session) -> None:
+def test_card_cycle_before_reset_day_uses_previous_reset(db_session: Session) -> None:
     category = add_category(db_session)
     card = add_card(db_session, billing_day=15)
 
+    add_transaction(db_session, TransactionType.EXPENSE, "25", occurred_at=at(2026, 6, 14), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "100", occurred_at=at(2026, 6, 15), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "200", occurred_at=at(2026, 6, 16), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "50", occurred_at=at(2026, 7, 10), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "70", occurred_at=at(2026, 7, 11), source_account=card, category=category)
 
-    spend = CardService(db_session).current_cycle_spend(card, date(2026, 7, 10))
-    assert spend == D("250.00")
+    exposure = CardService(db_session).credit_card_exposure(card, date(2026, 7, 10))
+    assert exposure["current_cycle_spend"] == D("350.00")
+    assert exposure["cycle_start_date"] == date(2026, 6, 15)
+    assert exposure["cycle_end_date"] == date(2026, 7, 14)
 
 
-def test_card_billing_cycle_after_billing_day(db_session: Session) -> None:
+def test_card_cycle_after_reset_day_starts_on_reset_day(db_session: Session) -> None:
     category = add_category(db_session)
     card = add_card(db_session, billing_day=15)
 
+    add_transaction(db_session, TransactionType.EXPENSE, "25", occurred_at=at(2026, 7, 14), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "100", occurred_at=at(2026, 7, 15), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "200", occurred_at=at(2026, 7, 16), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "50", occurred_at=at(2026, 7, 20), source_account=card, category=category)
 
-    spend = CardService(db_session).current_cycle_spend(card, date(2026, 7, 20))
-    assert spend == D("250.00")
+    exposure = CardService(db_session).credit_card_exposure(card, date(2026, 7, 20))
+    assert exposure["current_cycle_spend"] == D("350.00")
+    assert exposure["cycle_start_date"] == date(2026, 7, 15)
+    assert exposure["cycle_end_date"] == date(2026, 8, 14)
 
 
-def test_card_billing_cycle_across_december_to_january(db_session: Session) -> None:
+def test_card_cycle_resets_on_the_configured_day(db_session: Session) -> None:
     category = add_category(db_session)
     card = add_card(db_session, billing_day=15)
 
+    add_transaction(db_session, TransactionType.EXPENSE, "100", occurred_at=at(2026, 7, 14), source_account=card, category=category)
+    add_transaction(db_session, TransactionType.EXPENSE, "200", occurred_at=at(2026, 7, 15), source_account=card, category=category)
+
+    assert CardService(db_session).current_cycle_spend(card, date(2026, 7, 15)) == D("200.00")
+
+
+def test_card_cycle_across_december_to_january(db_session: Session) -> None:
+    category = add_category(db_session)
+    card = add_card(db_session, billing_day=15)
+
+    add_transaction(db_session, TransactionType.EXPENSE, "25", occurred_at=at(2025, 12, 14), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "100", occurred_at=at(2025, 12, 15), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "200", occurred_at=at(2025, 12, 16), source_account=card, category=category)
     add_transaction(db_session, TransactionType.EXPENSE, "50", occurred_at=at(2026, 1, 10), source_account=card, category=category)
 
-    spend = CardService(db_session).current_cycle_spend(card, date(2026, 1, 10))
-    assert spend == D("250.00")
+    exposure = CardService(db_session).credit_card_exposure(card, date(2026, 1, 10))
+    assert exposure["current_cycle_spend"] == D("350.00")
+    assert exposure["cycle_start_date"] == date(2025, 12, 15)
+    assert exposure["cycle_end_date"] == date(2026, 1, 14)
 
 
 def test_credit_card_utilization_calculation(db_session: Session) -> None:

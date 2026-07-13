@@ -5,8 +5,9 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { createAccount, getAccounts, getCardExposure, getErrorMessage } from "@/lib/api";
-import { clampPercentage, formatMoney, isValidMoneyInput, isValidNonNegativeMoneyInput } from "@/lib/money";
+import { createAccount, getAccounts, getCardExposure, getErrorMessage, updateCardStatement } from "@/lib/api";
+import { formatDate } from "@/lib/dates";
+import { clampPercentage, formatMoney, isValidMoneyInput, isValidNonNegativeMoneyInput, moneyToNumber } from "@/lib/money";
 import type { Account, AccountCreatePayload, AccountType, CreditCardExposure } from "@/lib/types";
 
 interface AccountFormState {
@@ -58,6 +59,12 @@ export function AccountsClient() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingStatementId, setEditingStatementId] = useState<string | null>(null);
+  const [statementAmount, setStatementAmount] = useState("");
+  const [statementDueDate, setStatementDueDate] = useState("");
+  const [statementError, setStatementError] = useState<string | null>(null);
+  const [statementMessage, setStatementMessage] = useState<string | null>(null);
+  const [statementSubmitting, setStatementSubmitting] = useState(false);
 
   const loadAccounts = useCallback(async () => {
     setLoading(true);
@@ -107,7 +114,7 @@ export function AccountsClient() {
         return "Enter a credit limit like 50000 or 50000.00.";
       }
       if (parseDay(form.billingDay) === null) {
-        return "Enter a billing day from 1 to 28.";
+        return "Enter a cycle reset day from 1 to 28.";
       }
       if (parseDay(form.dueDay) === null) {
         return "Enter a due day from 1 to 28.";
@@ -160,6 +167,64 @@ export function AccountsClient() {
       setSubmitError(getErrorMessage(submitErrorValue));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function startStatementEdit(account: Account, exposure: CreditCardExposure | undefined) {
+    setEditingStatementId(account.id);
+    setStatementAmount(String(exposure?.statement_balance_due ?? account.statement_balance ?? "0"));
+    setStatementDueDate(exposure?.statement_due_date ?? account.statement_due_date ?? "");
+    setStatementError(null);
+    setStatementMessage(null);
+  }
+
+  function cancelStatementEdit() {
+    setEditingStatementId(null);
+    setStatementAmount("");
+    setStatementDueDate("");
+    setStatementError(null);
+  }
+
+  async function handleStatementSubmit(
+    event: FormEvent<HTMLFormElement>,
+    account: Account,
+    exposure: CreditCardExposure | undefined,
+  ) {
+    event.preventDefault();
+    setStatementError(null);
+    setStatementMessage(null);
+
+    const amount = statementAmount.trim() || "0";
+    if (!isValidNonNegativeMoneyInput(amount)) {
+      setStatementError("Enter the current statement amount as a rupee value.");
+      return;
+    }
+
+    const amountValue = moneyToNumber(amount);
+    if (amountValue > 0 && !statementDueDate) {
+      setStatementError("Choose the date this statement is due.");
+      return;
+    }
+    if (exposure && amountValue > moneyToNumber(exposure.outstanding)) {
+      setStatementError("Statement due cannot exceed the card's total outstanding.");
+      return;
+    }
+
+    setStatementSubmitting(true);
+    try {
+      await updateCardStatement(account.id, {
+        statement_balance: amount,
+        statement_due_date: amountValue > 0 ? statementDueDate : null,
+      });
+      setStatementMessage(amountValue > 0 ? "Statement balance updated." : "Statement balance cleared.");
+      setEditingStatementId(null);
+      setStatementAmount("");
+      setStatementDueDate("");
+      await loadAccounts();
+    } catch (updateError) {
+      setStatementError(getErrorMessage(updateError));
+    } finally {
+      setStatementSubmitting(false);
     }
   }
 
@@ -237,7 +302,7 @@ export function AccountsClient() {
                 />
               </label>
               <label>
-                Billing day
+                Cycle reset day
                 <input
                   type="number"
                   min={1}
@@ -325,6 +390,8 @@ export function AccountsClient() {
             </div>
           </div>
 
+          {statementMessage ? <p className="form-message success">{statementMessage}</p> : null}
+
           {creditCardAccounts.length === 0 ? (
             <EmptyState title="No credit cards yet" message="Add a card to track billing-cycle exposure." />
           ) : (
@@ -351,15 +418,39 @@ export function AccountsClient() {
                         <dd>{formatMoney(exposure?.available_credit ?? 0)}</dd>
                       </div>
                       <div>
+                        <dt>Statement due</dt>
+                        <dd>{formatMoney(exposure?.statement_balance_due ?? account.statement_balance)}</dd>
+                      </div>
+                      <div>
+                        <dt>Unbilled balance</dt>
+                        <dd>{formatMoney(exposure?.unbilled_balance ?? 0)}</dd>
+                      </div>
+                      <div>
+                        <dt>Statement due date</dt>
+                        <dd>
+                          {exposure?.statement_due_date || account.statement_due_date
+                            ? formatDate(exposure?.statement_due_date ?? account.statement_due_date ?? "")
+                            : "Not set"}
+                        </dd>
+                      </div>
+                      <div>
                         <dt>Current cycle spend</dt>
                         <dd>{formatMoney(exposure?.current_cycle_spend ?? 0)}</dd>
                       </div>
                       <div>
-                        <dt>Billing / Due</dt>
+                        <dt>Reset / Due day</dt>
                         <dd>
                           Day {exposure?.billing_day ?? account.billing_day ?? "-"} / Day {exposure?.due_day ?? account.due_day ?? "-"}
                         </dd>
                       </div>
+                      {exposure ? (
+                        <div className="form-wide">
+                          <dt>Cycle window</dt>
+                          <dd>
+                            {formatDate(exposure.cycle_start_date)} - {formatDate(exposure.cycle_end_date)}
+                          </dd>
+                        </div>
+                      ) : null}
                     </dl>
                     <div className="utilization-row">
                       <span>Utilization {utilization}%</span>
@@ -367,6 +458,58 @@ export function AccountsClient() {
                         <span className="progress-fill" style={{ width: `${clampPercentage(utilization)}%` }} />
                       </div>
                     </div>
+
+                    {editingStatementId === account.id ? (
+                      <form
+                        className="form-grid statement-edit-form"
+                        onSubmit={(event) => void handleStatementSubmit(event, account, exposure)}
+                      >
+                        <label>
+                          Current statement due
+                          <input
+                            inputMode="decimal"
+                            value={statementAmount}
+                            onChange={(event) => {
+                              setStatementAmount(event.target.value);
+                              setStatementError(null);
+                            }}
+                            autoFocus
+                          />
+                        </label>
+                        <label>
+                          Due date
+                          <input
+                            type="date"
+                            value={statementDueDate}
+                            onChange={(event) => {
+                              setStatementDueDate(event.target.value);
+                              setStatementError(null);
+                            }}
+                            disabled={moneyToNumber(statementAmount || "0") === 0}
+                          />
+                        </label>
+                        <p className="helper-text form-wide">
+                          Enter the amount still payable from the latest generated statement. Later card payments and refunds reduce it automatically.
+                        </p>
+                        {statementError ? <p className="form-message error form-wide">{statementError}</p> : null}
+                        <div className="form-actions form-wide">
+                          <button className="primary-button compact-button" type="submit" disabled={statementSubmitting}>
+                            {statementSubmitting ? "Saving..." : "Save statement"}
+                          </button>
+                          <button className="secondary-button compact-button" type="button" onClick={cancelStatementEdit}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button
+                        className="secondary-button compact-button card-action"
+                        type="button"
+                        onClick={() => startStatementEdit(account, exposure)}
+                      >
+                        Update statement
+                      </button>
+                    )}
                   </article>
                 );
               })}

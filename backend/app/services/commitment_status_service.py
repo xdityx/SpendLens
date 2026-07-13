@@ -62,6 +62,7 @@ class CommitmentStatusService:
             self.db.scalars(
                 select(Transaction)
                 .where(
+                    Transaction.voided_at.is_(None),
                     Transaction.recurring_commitment_id == commitment.id,
                     Transaction.transaction_type == TransactionType.EXPENSE,
                     Transaction.occurred_at >= start_dt,

@@ -75,17 +75,17 @@ def current_month_bounds(as_of: date) -> tuple[datetime, datetime]:
 
 
 def billing_cycle_bounds(billing_day: int, as_of: date) -> tuple[date, date]:
-    """Return the current card cycle start and statement closing dates in app-local dates."""
+    """Return the inclusive current card cycle range in app-local dates."""
 
-    if as_of.day > billing_day:
-        start = date(as_of.year, as_of.month, billing_day) + timedelta(days=1)
+    if as_of.day >= billing_day:
+        start = date(as_of.year, as_of.month, billing_day)
         next_month_start = next_month(as_of)
-        end = date(next_month_start.year, next_month_start.month, billing_day)
+        end = date(next_month_start.year, next_month_start.month, billing_day) - timedelta(days=1)
         return start, end
 
     previous_month_start = previous_month(as_of)
-    start = date(previous_month_start.year, previous_month_start.month, billing_day) + timedelta(days=1)
-    end = date(as_of.year, as_of.month, billing_day)
+    start = date(previous_month_start.year, previous_month_start.month, billing_day)
+    end = date(as_of.year, as_of.month, billing_day) - timedelta(days=1)
     return start, end
 
 

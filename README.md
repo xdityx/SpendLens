@@ -2,7 +2,7 @@
 
 SpendLens is a personal finance utility for tracking how much money is actually safe to spend when money moves across bank accounts, cash, wallets, UPI, credit cards, recurring expenses, EMI installments, and monthly investments.
 
-Phase 2B adds obligation intelligence for amount-based recurring commitments and first-class credit-card EMI plan tracking. There is still no authentication, AI, statement ingestion, Gmail/SMS integration, bank API integration, PDF parsing, CSV import, transaction editing, or transaction deletion.
+Phase 2C adds audited transaction correction: active transactions can be edited through full financial revalidation, and transactions can be voided without erasing their history. There is still no authentication, AI, statement ingestion, Gmail/SMS integration, bank API integration, PDF parsing, CSV import, or permanent transaction deletion.
 
 ## Core Financial Rule
 
@@ -73,6 +73,7 @@ The frontend focuses on manual personal finance tracking:
 - Credit-card exposure cards using backend `/api/v1/cards/exposure` values.
 - Recent transactions and full transaction history with linked commitment and EMI plan labels.
 - Manual transaction entry for expense, income, transfer, investment, refund, recurring commitment payments, and EMI installment postings.
+- Transaction editing and audited voiding with automatic recalculation of balances, obligations, EMI recognition, and Safe to Spend.
 - Account creation for bank, cash, wallet, and credit-card accounts.
 - Financial profile, recurring commitment setup, and EMI plan setup.
 - Mobile-first layout with desktop sidebar and mobile bottom navigation.
@@ -200,6 +201,16 @@ When a transaction links to a recurring commitment, it must match the commitment
 
 A transaction may link to either a recurring commitment or an EMI plan, never both. EMI-linked transactions must match the EMI plan card, category, expected installment amount, and app-local month uniqueness rules.
 
+## Transaction Corrections
+
+`PUT /api/v1/transactions/{transaction_id}` replaces an active transaction after applying the same account, category, commitment, EMI, date, and transaction-shape validation used during creation. Voided transactions cannot be edited.
+
+`DELETE /api/v1/transactions/{transaction_id}` is intentionally non-destructive. It sets `voided_at`, keeps the original record available for audit, and removes it from every financial calculation. Repeating the request is idempotent.
+
+The transaction list excludes voided records by default. Pass `include_voided=true` to include the audit history. An earlier EMI installment cannot be moved, unlinked, or voided while a later active installment exists.
+
+Apply Alembic migration `20260713_0003` before using transaction corrections against an existing database.
+
 ## Credit Card Handling
 
 For credit cards:
@@ -224,6 +235,8 @@ Financial exposure reports liability as `max(raw_outstanding, 0)`. If a card is 
 - `GET /api/v1/categories`
 - `POST /api/v1/transactions`
 - `GET /api/v1/transactions`
+- `PUT /api/v1/transactions/{transaction_id}`
+- `DELETE /api/v1/transactions/{transaction_id}` (audited void)
 - `POST /api/v1/commitments`
 - `GET /api/v1/commitments`
 - `GET /api/v1/commitments/status`
@@ -236,7 +249,7 @@ Financial exposure reports liability as `max(raw_outstanding, 0)`. If a card is 
 - `GET /api/v1/dashboard/summary`
 - `GET /api/v1/cards/exposure`
 
-`GET /api/v1/transactions` supports optional filters: `account_id`, `transaction_type`, `category_id`, `date_from`, and `date_to`.
+`GET /api/v1/transactions` supports optional filters: `account_id`, `transaction_type`, `category_id`, `date_from`, `date_to`, and `include_voided`.
 
 Dashboard, card exposure, commitment status, and EMI status endpoints accept an optional `as_of=YYYY-MM-DD` query parameter for deterministic calculations. If omitted, the API uses the current application-local date.
 

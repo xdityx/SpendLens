@@ -1,8 +1,9 @@
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, Numeric, String
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +40,9 @@ class Account(Base, TimestampMixin):
     credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     billing_day: Mapped[int | None] = mapped_column(nullable=True)
     due_day: Mapped[int | None] = mapped_column(nullable=True)
+    statement_balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    statement_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    statement_balance_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     source_transactions: Mapped[list["Transaction"]] = relationship(

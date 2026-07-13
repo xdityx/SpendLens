@@ -1,6 +1,7 @@
 import type {
   Account,
   AccountCreatePayload,
+  CardStatementUpdatePayload,
   Category,
   Commitment,
   CommitmentCreatePayload,
@@ -17,6 +18,7 @@ import type {
   Transaction,
   TransactionCreatePayload,
   TransactionFilters,
+  TransactionUpdatePayload,
 } from "./types";
 
 export class ApiError extends Error {
@@ -119,9 +121,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 function buildQuery(params: object): string {
   const searchParams = new URLSearchParams();
 
-  Object.entries(params as Record<string, string | undefined>).forEach(([key, value]) => {
+  Object.entries(params as Record<string, string | number | boolean | undefined>).forEach(([key, value]) => {
     if (value !== undefined && value !== "") {
-      searchParams.set(key, value);
+      searchParams.set(key, String(value));
     }
   });
 
@@ -160,6 +162,13 @@ export function createAccount(payload: AccountCreatePayload): Promise<Account> {
   });
 }
 
+export function updateCardStatement(accountId: string, payload: CardStatementUpdatePayload): Promise<Account> {
+  return request<Account>("/api/v1/accounts/" + accountId + "/statement", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getCategories(): Promise<Category[]> {
   return request<Category[]>("/api/v1/categories");
 }
@@ -172,6 +181,19 @@ export function createTransaction(payload: TransactionCreatePayload): Promise<Tr
   return request<Transaction>("/api/v1/transactions", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateTransaction(transactionId: string, payload: TransactionUpdatePayload): Promise<Transaction> {
+  return request<Transaction>("/api/v1/transactions/" + transactionId, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function voidTransaction(transactionId: string): Promise<Transaction> {
+  return request<Transaction>("/api/v1/transactions/" + transactionId, {
+    method: "DELETE",
   });
 }
 

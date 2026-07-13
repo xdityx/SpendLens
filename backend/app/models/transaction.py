@@ -69,6 +69,13 @@ class Transaction(Base):
         nullable=False,
         server_default=func.now(),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True, index=True)
 
     source_account: Mapped["Account | None"] = relationship(
         back_populates="source_transactions",

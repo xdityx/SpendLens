@@ -259,14 +259,14 @@ def test_balance_as_of_end_of_day_uses_app_local_boundary(db_session: Session) -
     assert BalanceService(db_session).current_balance(bank, date(2026, 8, 1)) == D("100.00")
 
 
-def test_card_billing_cycle_spend_uses_app_local_cycle_boundary(db_session: Session) -> None:
+def test_card_cycle_reset_uses_app_local_midnight_boundary(db_session: Session) -> None:
     category = add_category(db_session)
     card = add_card(db_session, billing_day=15)
     add_transaction(
         db_session,
         TransactionType.EXPENSE,
         "75",
-        datetime(2026, 7, 15, 18, 0, 0),
+        datetime(2026, 7, 14, 18, 0, 0),
         source_account=card,
         category=category,
     )
@@ -274,7 +274,7 @@ def test_card_billing_cycle_spend_uses_app_local_cycle_boundary(db_session: Sess
         db_session,
         TransactionType.EXPENSE,
         "100",
-        datetime(2026, 7, 15, 19, 0, 0),
+        datetime(2026, 7, 14, 19, 0, 0),
         source_account=card,
         category=category,
     )

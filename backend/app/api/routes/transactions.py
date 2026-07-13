@@ -12,7 +12,7 @@ from app.models.account import AccountType
 from app.models.commitment import CommitmentType, RecurringCommitment
 from app.models.emi_plan import EMIPlan, EMISetupCurrentMonthState
 from app.models.transaction import Transaction, TransactionType
-from app.schemas.transaction import TransactionCreate, TransactionRead
+from app.schemas.transaction import TransactionCreate, TransactionRead, TransactionUpdate
 from app.services import date_utils
 from app.services.balance_service import ZERO
 from app.services.emi_service import EMIService
@@ -60,11 +60,18 @@ def _format_installment_month(installment_month: date) -> str:
     return installment_month.strftime("%Y-%m")
 
 
-def _validate_emi_link(db: Session, payload: TransactionCreate, emi_plan: EMIPlan, occurred_at: datetime) -> None:
+def _validate_emi_link(
+    db: Session,
+    payload: TransactionCreate,
+    emi_plan: EMIPlan,
+    occurred_at: datetime,
+    allow_inactive_emi_plan_id: uuid.UUID | None = None,
+    allow_later_linked_transactions: bool = False,
+) -> None:
     if payload.transaction_type != TransactionType.EXPENSE:
         raise HTTPException(status_code=422, detail="EMI plan transactions must be expense transactions")
 
-    if not emi_plan.is_active:
+    if not emi_plan.is_active and emi_plan.id != allow_inactive_emi_plan_id:
         raise HTTPException(status_code=422, detail="Inactive EMI plans cannot record new installments")
 
     if payload.source_account_id != emi_plan.account_id:
@@ -104,7 +111,7 @@ def _validate_emi_link(db: Session, payload: TransactionCreate, emi_plan: EMIPla
             detail=f"An earlier EMI installment month must be recognized first: {_format_installment_month(missing_month)}",
         )
 
-    if service.later_linked_transaction_exists(emi_plan, installment_month):
+    if not allow_later_linked_transactions and service.later_linked_transaction_exists(emi_plan, installment_month):
         raise HTTPException(
             status_code=422,
             detail="Cannot backfill an EMI installment before an already-recorded later installment",
@@ -127,8 +134,19 @@ def _validate_emi_link(db: Session, payload: TransactionCreate, emi_plan: EMIPla
         )
 
 
-@router.post("", response_model=TransactionRead, status_code=201)
-def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)) -> Transaction:
+def _get_transaction_or_404(db: Session, transaction_id: uuid.UUID) -> Transaction:
+    transaction = db.get(Transaction, transaction_id)
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return transaction
+
+
+def _validated_transaction_data(
+    db: Session,
+    payload: TransactionCreate,
+    allow_inactive_emi_plan_id: uuid.UUID | None = None,
+    existing_emi_transaction: Transaction | None = None,
+) -> dict[str, object]:
     data = payload.model_dump()
 
     if payload.recurring_commitment_id is not None and payload.emi_plan_id is not None:
@@ -189,9 +207,60 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
         _validate_commitment_link(payload, linked_commitment)
 
     if linked_emi_plan is not None:
-        _validate_emi_link(db, payload, linked_emi_plan, data["occurred_at"])
+        allow_later_linked_transactions = False
+        if existing_emi_transaction is not None and existing_emi_transaction.emi_plan_id == linked_emi_plan.id:
+            existing_month = date_utils.month_start(
+                date_utils.app_local_date_from_utc_naive(existing_emi_transaction.occurred_at)
+            )
+            replacement_month = date_utils.month_start(
+                date_utils.app_local_date_from_utc_naive(data["occurred_at"])
+            )
+            allow_later_linked_transactions = existing_month == replacement_month
 
-    transaction = Transaction(**data)
+        _validate_emi_link(
+            db,
+            payload,
+            linked_emi_plan,
+            data["occurred_at"],
+            allow_inactive_emi_plan_id=allow_inactive_emi_plan_id,
+            allow_later_linked_transactions=allow_later_linked_transactions,
+        )
+
+    return data
+
+
+def _assert_emi_correction_keeps_history_contiguous(
+    db: Session,
+    transaction: Transaction,
+    replacement_emi_plan_id: uuid.UUID | None = None,
+    replacement_occurred_at: datetime | None = None,
+) -> None:
+    if transaction.emi_plan_id is None:
+        return
+
+    original_month = date_utils.month_start(
+        date_utils.app_local_date_from_utc_naive(transaction.occurred_at)
+    )
+    replacement_month = None
+    if replacement_emi_plan_id is not None and replacement_occurred_at is not None:
+        replacement_month = date_utils.month_start(
+            date_utils.app_local_date_from_utc_naive(replacement_occurred_at)
+        )
+
+    if replacement_emi_plan_id == transaction.emi_plan_id and replacement_month == original_month:
+        return
+
+    plan = get_emi_plan_or_404(db, transaction.emi_plan_id)
+    if EMIService(db).later_linked_transaction_exists(plan, original_month):
+        raise HTTPException(
+            status_code=422,
+            detail="Cannot move, unlink, or void an EMI installment while a later installment exists",
+        )
+
+
+@router.post("", response_model=TransactionRead, status_code=201)
+def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)) -> Transaction:
+    transaction = Transaction(**_validated_transaction_data(db, payload))
     db.add(transaction)
     db.commit()
     db.refresh(transaction)
@@ -205,12 +274,15 @@ def list_transactions(
     category_id: uuid.UUID | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    include_voided: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> list[Transaction]:
     if date_from is not None and date_to is not None and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be <= date_to")
 
     statement = select(Transaction)
+    if not include_voided:
+        statement = statement.where(Transaction.voided_at.is_(None))
     if account_id is not None:
         statement = statement.where(
             or_(Transaction.source_account_id == account_id, Transaction.destination_account_id == account_id)
@@ -226,3 +298,67 @@ def list_transactions(
 
     statement = statement.order_by(Transaction.occurred_at.desc(), Transaction.created_at.desc())
     return list(db.scalars(statement).all())
+
+
+@router.put("/{transaction_id}", response_model=TransactionRead)
+def update_transaction(
+    transaction_id: uuid.UUID,
+    payload: TransactionUpdate,
+    db: Session = Depends(get_db),
+) -> Transaction:
+    transaction = _get_transaction_or_404(db, transaction_id)
+    if transaction.voided_at is not None:
+        raise HTTPException(status_code=409, detail="Voided transactions cannot be edited")
+
+    original_emi_plan_id = transaction.emi_plan_id
+    transaction.voided_at = date_utils.utc_now_naive()
+    db.flush()
+
+    try:
+        data = _validated_transaction_data(
+            db,
+            payload,
+            allow_inactive_emi_plan_id=(
+                original_emi_plan_id if payload.emi_plan_id == original_emi_plan_id else None
+            ),
+            existing_emi_transaction=transaction,
+        )
+        _assert_emi_correction_keeps_history_contiguous(
+            db,
+            transaction,
+            replacement_emi_plan_id=payload.emi_plan_id,
+            replacement_occurred_at=data["occurred_at"],
+        )
+        for field, value in data.items():
+            setattr(transaction, field, value)
+        transaction.voided_at = None
+        transaction.updated_at = date_utils.utc_now_naive()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(transaction)
+    return transaction
+
+
+@router.delete("/{transaction_id}", response_model=TransactionRead)
+def void_transaction(transaction_id: uuid.UUID, db: Session = Depends(get_db)) -> Transaction:
+    transaction = _get_transaction_or_404(db, transaction_id)
+    if transaction.voided_at is not None:
+        return transaction
+
+    voided_at = date_utils.utc_now_naive()
+    transaction.voided_at = voided_at
+    transaction.updated_at = voided_at
+    db.flush()
+
+    try:
+        _assert_emi_correction_keeps_history_contiguous(db, transaction)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(transaction)
+    return transaction

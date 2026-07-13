@@ -24,6 +24,16 @@ function parseApiDateTime(value: string): Date {
   return new Date(normalized);
 }
 
+export function apiDateTimeToLocalInput(value: string): string {
+  const parsed = parseApiDateTime(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  const offsetMs = parsed.getTimezoneOffset() * 60 * 1000;
+  return new Date(parsed.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 export function localDateTimeInputToUtcIso(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) {

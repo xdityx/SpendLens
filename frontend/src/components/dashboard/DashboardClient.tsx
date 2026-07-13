@@ -266,39 +266,49 @@ export function DashboardClient() {
   const savingsCompleted = moneyToNumber(summary.savings_completed_this_month);
   const savingsProgress = savingsTarget > 0 ? Math.min(100, Math.max(0, (savingsCompleted / savingsTarget) * 100)) : 0;
   const isNegativeSafeToSpend = moneyToNumber(summary.safe_to_spend) < 0;
+  const isNegativeDueSoon = moneyToNumber(summary.due_soon_cash_position) < 0;
 
   return (
     <div className="page-stack">
-      <header className="page-header hero-header">
-        <div>
-          <p className="eyebrow">Safe to spend</p>
-          <h1>{formatMoney(summary.safe_to_spend)}</h1>
-          <span className={statusClass(summary.status)}>{statusLabels[summary.status] ?? summary.status}</span>
-        </div>
-        <Link className="primary-button" href="/transactions?add=transaction">
-          Add Transaction
-        </Link>
-      </header>
-
-      <section className="panel breakdown-panel" aria-label="Safe to Spend breakdown">
-        <div className="section-heading-row compact">
+      <div className="dashboard-overview">
+        <header className="page-header hero-header">
           <div>
-            <p className="eyebrow">Why this amount?</p>
-            <h2>Safe to Spend breakdown</h2>
+            <p className="eyebrow">Safe to spend</p>
+            <h1>{formatMoney(summary.safe_to_spend)}</h1>
+            <span className={statusClass(summary.status)}>{statusLabels[summary.status] ?? summary.status}</span>
+            <p className="hero-caption">
+              Conservative position after all card debt, including unbilled purchases, and this month&apos;s reserved obligations.
+            </p>
           </div>
-        </div>
-        <dl className="breakdown-list">
-          <BreakdownRow label="Liquid cash" value={summary.liquid_cash} tone="positive" />
-          <BreakdownRow label="Card liability" value={summary.credit_card_liability} tone="negative" />
-          <BreakdownRow label="Fixed commitments left" value={summary.remaining_fixed_commitments} />
-          <BreakdownRow label="EMI installments left" value={summary.remaining_emi_installments} />
-          <BreakdownRow label="Savings target left" value={summary.remaining_savings_target} />
-          <BreakdownRow label="Safe to Spend" value={summary.safe_to_spend} tone={isNegativeSafeToSpend ? "negative" : "positive"} />
-        </dl>
-        {isNegativeSafeToSpend ? (
-          <p className="helper-text">Your current cash does not fully cover recorded liabilities and reserved obligations.</p>
-        ) : null}
-      </section>
+          <Link className="primary-button" href="/transactions?add=transaction">
+            Add Transaction
+          </Link>
+        </header>
+
+        <section className="panel breakdown-panel" aria-label="Safe to Spend breakdown">
+          <div className="section-heading-row compact">
+            <div>
+              <p className="eyebrow">Why this amount?</p>
+              <h2>Safe to Spend breakdown</h2>
+            </div>
+          </div>
+          <dl className="breakdown-list">
+            <BreakdownRow label="Liquid cash" value={summary.liquid_cash} tone="positive" />
+            <BreakdownRow label="Card liability" value={summary.credit_card_liability} tone="negative" />
+            <BreakdownRow label="Fixed commitments left" value={summary.remaining_fixed_commitments} />
+            <BreakdownRow label="EMI installments left" value={summary.remaining_emi_installments} />
+            <BreakdownRow label="Savings target left" value={summary.remaining_savings_target} />
+            <BreakdownRow label="Safe to Spend" value={summary.safe_to_spend} tone={isNegativeSafeToSpend ? "negative" : "positive"} />
+          </dl>
+          <p className="helper-text">
+            Card liability contains {formatMoney(summary.statement_balance_due)} currently due and{" "}
+            {formatMoney(summary.unbilled_card_liability)} for later statements.
+          </p>
+          {isNegativeSafeToSpend ? (
+            <p className="helper-text">Your current cash does not fully cover recorded liabilities and reserved obligations.</p>
+          ) : null}
+        </section>
+      </div>
 
       {data.categories.length === 0 ? <CategorySetupWarning /> : null}
 
@@ -323,6 +333,13 @@ export function DashboardClient() {
       <section className="metric-grid" aria-label="Financial summary">
         <SummaryCard label="Liquid Cash" value={summary.liquid_cash} tone="positive" />
         <SummaryCard label="Card Liability" value={summary.credit_card_liability} tone="negative" />
+        <SummaryCard label="Statement Due" value={summary.statement_balance_due} tone="negative" />
+        <SummaryCard label="Unbilled Card Spend" value={summary.unbilled_card_liability} />
+        <SummaryCard
+          label="Due-Soon Cash Position"
+          value={summary.due_soon_cash_position}
+          tone={isNegativeDueSoon ? "negative" : "positive"}
+        />
         <SummaryCard label="Fixed Commitments Left" value={summary.remaining_fixed_commitments} />
         <SummaryCard label="EMI Installments Left" value={summary.remaining_emi_installments} />
         <SummaryCard label="Savings Target Left" value={summary.remaining_savings_target} />
@@ -412,13 +429,31 @@ export function DashboardClient() {
                       <dd>{formatMoney(card.available_credit)}</dd>
                     </div>
                     <div>
+                      <dt>Statement due</dt>
+                      <dd>{formatMoney(card.statement_balance_due)}</dd>
+                    </div>
+                    <div>
+                      <dt>Unbilled balance</dt>
+                      <dd>{formatMoney(card.unbilled_balance)}</dd>
+                    </div>
+                    <div>
+                      <dt>Statement due date</dt>
+                      <dd>{card.statement_due_date ? formatDate(card.statement_due_date) : "Not set"}</dd>
+                    </div>
+                    <div>
                       <dt>Cycle spend</dt>
                       <dd>{formatMoney(card.current_cycle_spend)}</dd>
                     </div>
                     <div>
-                      <dt>Billing / Due</dt>
+                      <dt>Reset / Due day</dt>
                       <dd>
                         Day {card.billing_day} / Day {card.due_day}
+                      </dd>
+                    </div>
+                    <div className="form-wide">
+                      <dt>Cycle window</dt>
+                      <dd>
+                        {formatDate(card.cycle_start_date)} - {formatDate(card.cycle_end_date)}
                       </dd>
                     </div>
                   </dl>

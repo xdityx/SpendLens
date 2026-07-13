@@ -52,6 +52,10 @@ class TransactionCreate(BaseModel):
         return self
 
 
+class TransactionUpdate(TransactionCreate):
+    occurred_at: datetime
+
+
 class TransactionRead(BaseModel):
     id: uuid.UUID
     transaction_type: TransactionType
@@ -65,5 +69,7 @@ class TransactionRead(BaseModel):
     description: str | None
     occurred_at: datetime
     created_at: datetime
+    updated_at: datetime
+    voided_at: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
