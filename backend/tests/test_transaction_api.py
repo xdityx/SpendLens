@@ -99,6 +99,26 @@ def transfer_payload(source_account_id: str, destination_account_id: str, **over
     return payload
 
 
+def income_payload(destination_account_id: str, **overrides: Any) -> dict[str, Any]:
+    payload = {
+        "transaction_type": "income",
+        "amount": "100.00",
+        "destination_account_id": destination_account_id,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def refund_payload(destination_account_id: str, **overrides: Any) -> dict[str, Any]:
+    payload = {
+        "transaction_type": "refund",
+        "amount": "100.00",
+        "destination_account_id": destination_account_id,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_credit_card_source_transfer_is_rejected(api_client: TestClient) -> None:
     card = create_card(api_client)
     bank = create_bank(api_client)
@@ -127,6 +147,33 @@ def test_bank_to_bank_transfer_is_accepted(api_client: TestClient) -> None:
 
     assert response.status_code == 201
     assert response.json()["source_account_id"] == source
+
+
+def test_income_to_bank_is_accepted(api_client: TestClient) -> None:
+    bank = create_bank(api_client)
+
+    response = post_transaction(api_client, income_payload(bank))
+
+    assert response.status_code == 201
+    assert response.json()["destination_account_id"] == bank
+
+
+def test_income_to_credit_card_is_rejected(api_client: TestClient) -> None:
+    card = create_card(api_client)
+
+    response = post_transaction(api_client, income_payload(card))
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Income transactions cannot use a credit-card destination account"
+
+
+def test_refund_to_credit_card_is_accepted(api_client: TestClient) -> None:
+    card = create_card(api_client)
+
+    response = post_transaction(api_client, refund_payload(card))
+
+    assert response.status_code == 201
+    assert response.json()["destination_account_id"] == card
 
 
 def test_credit_card_expense_is_accepted(api_client: TestClient) -> None:

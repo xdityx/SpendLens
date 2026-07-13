@@ -138,8 +138,9 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
     if payload.source_account_id is not None:
         source_account = get_account_or_404(db, payload.source_account_id)
 
+    destination_account = None
     if payload.destination_account_id is not None:
-        get_account_or_404(db, payload.destination_account_id)
+        destination_account = get_account_or_404(db, payload.destination_account_id)
 
     if payload.category_id is not None:
         get_category_or_404(db, payload.category_id)
@@ -175,6 +176,13 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
             raise HTTPException(
                 status_code=422,
                 detail="Credit cards cannot be used as the source account for an investment",
+            )
+
+    if payload.transaction_type == TransactionType.INCOME and destination_account is not None:
+        if destination_account.account_type == AccountType.CREDIT_CARD:
+            raise HTTPException(
+                status_code=422,
+                detail="Income transactions cannot use a credit-card destination account",
             )
 
     if linked_commitment is not None:

@@ -186,12 +186,14 @@ export function SettingsClient() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
+  const [emiPlans, setEmiPlans] = useState<EMIPlan[]>([]);
   const [emiStatuses, setEmiStatuses] = useState<EMIPlanStatus[]>([]);
   const [profile, setProfile] = useState<FinancialProfile | null>(null);
   const [profileForm, setProfileForm] = useState<ProfileFormState>(initialProfileForm);
   const [commitmentForm, setCommitmentForm] = useState<CommitmentFormState>(initialCommitmentForm);
   const [commitmentEditForm, setCommitmentEditForm] = useState<CommitmentEditFormState>(initialCommitmentEditForm);
   const [emiForm, setEmiForm] = useState<EMIFormState>(initialEmiForm);
+  const [emiPlanEditForm, setEmiPlanEditForm] = useState<EMIPlanEditFormState>(initialEmiPlanEditForm);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -202,10 +204,14 @@ export function SettingsClient() {
   const [commitmentEditSuccess, setCommitmentEditSuccess] = useState<string | null>(null);
   const [emiError, setEmiError] = useState<string | null>(null);
   const [emiSuccess, setEmiSuccess] = useState<string | null>(null);
+  const [emiEditError, setEmiEditError] = useState<string | null>(null);
+  const [emiEditSuccess, setEmiEditSuccess] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [creatingCommitment, setCreatingCommitment] = useState(false);
   const [editingCommitmentId, setEditingCommitmentId] = useState<string | null>(null);
   const [updatingCommitmentId, setUpdatingCommitmentId] = useState<string | null>(null);
+  const [editingEmiPlanId, setEditingEmiPlanId] = useState<string | null>(null);
+  const [updatingEmiPlanId, setUpdatingEmiPlanId] = useState<string | null>(null);
   const [creatingEmiPlan, setCreatingEmiPlan] = useState(false);
 
   const loadSettings = useCallback(async () => {
@@ -213,11 +219,12 @@ export function SettingsClient() {
     setError(null);
 
     try {
-      const [loadedProfile, loadedAccounts, loadedCategories, loadedCommitments, loadedEmiStatuses] = await Promise.all([
+      const [loadedProfile, loadedAccounts, loadedCategories, loadedCommitments, loadedEmiPlans, loadedEmiStatuses] = await Promise.all([
         getFinancialProfile(),
         getAccounts(),
         getCategories(),
         getCommitments(),
+        getEmiPlans(),
         getEmiPlanStatuses(),
       ]);
 
@@ -225,6 +232,7 @@ export function SettingsClient() {
       setAccounts(loadedAccounts);
       setCategories(loadedCategories);
       setCommitments(loadedCommitments);
+      setEmiPlans(loadedEmiPlans);
       setEmiStatuses(loadedEmiStatuses);
       setProfileForm({
         monthlySavingsTarget: loadedProfile ? String(loadedProfile.monthly_savings_target) : "0",
@@ -266,6 +274,22 @@ export function SettingsClient() {
 
     return activeAccounts;
   }, [activeAccounts, editingCommitment?.commitment_type]);
+  const emiPlansById = useMemo(() => new Map(emiPlans.map((plan) => [plan.id, plan])), [emiPlans]);
+  const editingEmiPlan = useMemo(
+    () => emiPlans.find((plan) => plan.id === editingEmiPlanId) ?? null,
+    [emiPlans, editingEmiPlanId],
+  );
+  const emiPlanEditCardOptions = useMemo(() => {
+    const currentAccount = editingEmiPlan ? accountsById.get(editingEmiPlan.account_id) : undefined;
+    if (
+      currentAccount?.account_type === "credit_card" &&
+      !creditCardAccounts.some((account) => account.id === currentAccount.id)
+    ) {
+      return [...creditCardAccounts, currentAccount];
+    }
+
+    return creditCardAccounts;
+  }, [accountsById, creditCardAccounts, editingEmiPlan]);
 
   useEffect(() => {
     const selectedAccount = commitmentForm.accountId ? accountsById.get(commitmentForm.accountId) : undefined;
@@ -355,6 +379,36 @@ export function SettingsClient() {
     setEmiSuccess(null);
   }
 
+  function updateEmiPlanEditForm<K extends keyof EMIPlanEditFormState>(key: K, value: EMIPlanEditFormState[K]) {
+    setEmiPlanEditForm((current) => ({ ...current, [key]: value }));
+    setEmiEditError(null);
+    setEmiEditSuccess(null);
+  }
+
+  function startEmiPlanEdit(plan: EMIPlan) {
+    setEditingEmiPlanId(plan.id);
+    setEmiPlanEditForm({
+      name: plan.name,
+      accountId: plan.account_id,
+      categoryId: plan.category_id,
+      monthlyInstallment: String(plan.monthly_installment),
+      remainingAmountAtSetup: String(plan.remaining_amount_at_setup),
+      dueDay: String(plan.due_day),
+      setupCurrentMonthState: plan.setup_current_month_state,
+      isActive: plan.is_active,
+    });
+    setEmiEditError(null);
+    setEmiEditSuccess(null);
+    setEmiError(null);
+    setEmiSuccess(null);
+  }
+
+  function cancelEmiPlanEdit() {
+    setEditingEmiPlanId(null);
+    setEmiPlanEditForm(initialEmiPlanEditForm);
+    setEmiEditError(null);
+  }
+
   function handleCommitmentTypeChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextType = event.target.value as CommitmentType;
     setCommitmentForm((current) => ({
@@ -397,30 +451,40 @@ export function SettingsClient() {
     }
   }
 
-  function validateEmiForm(): string | null {
-    if (!emiForm.name.trim()) {
+  function validateEmiFields(
+    form: Pick<EMIPlanEditFormState, "name" | "accountId" | "categoryId" | "monthlyInstallment" | "remainingAmountAtSetup" | "dueDay">,
+  ): string | null {
+    if (!form.name.trim()) {
       return "Enter an EMI plan name.";
     }
-    if (!emiForm.accountId) {
+    if (!form.accountId) {
       return "Choose a credit card.";
     }
-    if (accountsById.get(emiForm.accountId)?.account_type !== "credit_card") {
+    if (accountsById.get(form.accountId)?.account_type !== "credit_card") {
       return "EMI plans must use a credit card.";
     }
-    if (!emiForm.categoryId) {
+    if (!form.categoryId) {
       return "Choose a category.";
     }
-    if (!isValidMoneyInput(emiForm.monthlyInstallment)) {
+    if (!isValidMoneyInput(form.monthlyInstallment)) {
       return "Enter a monthly installment like 850 or 850.00.";
     }
-    if (!isValidMoneyInput(emiForm.remainingAmountAtSetup)) {
+    if (!isValidMoneyInput(form.remainingAmountAtSetup)) {
       return "Enter the total remaining EMI amount.";
     }
-    if (parseDay(emiForm.dueDay) === null) {
+    if (parseDay(form.dueDay) === null) {
       return "Enter a due day from 1 to 28.";
     }
 
     return null;
+  }
+
+  function validateEmiForm(): string | null {
+    return validateEmiFields(emiForm);
+  }
+
+  function validateEmiPlanEditForm(): string | null {
+    return validateEmiFields(emiPlanEditForm);
   }
 
   async function handleCommitmentSubmit(event: FormEvent<HTMLFormElement>) {
@@ -521,11 +585,53 @@ export function SettingsClient() {
       await createEmiPlan(payload);
       setEmiSuccess("EMI plan created.");
       setEmiForm(initialEmiForm);
-      setEmiStatuses(await getEmiPlanStatuses());
+      const [updatedEmiPlans, updatedEmiStatuses] = await Promise.all([getEmiPlans(), getEmiPlanStatuses()]);
+      setEmiPlans(updatedEmiPlans);
+      setEmiStatuses(updatedEmiStatuses);
+      setEmiEditSuccess(null);
     } catch (createError) {
       setEmiError(getErrorMessage(createError));
     } finally {
       setCreatingEmiPlan(false);
+    }
+  }
+
+  async function handleEmiPlanEditSubmit(event: FormEvent<HTMLFormElement>, plan: EMIPlan) {
+    event.preventDefault();
+    setEmiEditError(null);
+    setEmiEditSuccess(null);
+
+    const validationError = validateEmiPlanEditForm();
+    const dueDay = parseDay(emiPlanEditForm.dueDay);
+    if (validationError || dueDay === null) {
+      setEmiEditError(validationError ?? "Enter a due day from 1 to 28.");
+      return;
+    }
+
+    const payload: EMIPlanUpdatePayload = {
+      name: emiPlanEditForm.name.trim(),
+      account_id: emiPlanEditForm.accountId,
+      category_id: emiPlanEditForm.categoryId,
+      monthly_installment: emiPlanEditForm.monthlyInstallment.trim(),
+      remaining_amount_at_setup: emiPlanEditForm.remainingAmountAtSetup.trim(),
+      due_day: dueDay,
+      setup_current_month_state: emiPlanEditForm.setupCurrentMonthState,
+      is_active: emiPlanEditForm.isActive,
+    };
+
+    setUpdatingEmiPlanId(plan.id);
+    try {
+      await updateEmiPlan(plan.id, payload);
+      const [updatedEmiPlans, updatedEmiStatuses] = await Promise.all([getEmiPlans(), getEmiPlanStatuses()]);
+      setEmiPlans(updatedEmiPlans);
+      setEmiStatuses(updatedEmiStatuses);
+      setEditingEmiPlanId(null);
+      setEmiPlanEditForm(initialEmiPlanEditForm);
+      setEmiEditSuccess("EMI plan updated.");
+    } catch (updateError) {
+      setEmiEditError(getErrorMessage(updateError));
+    } finally {
+      setUpdatingEmiPlanId(null);
     }
   }
 
@@ -925,60 +1031,206 @@ export function SettingsClient() {
             <h2>Current installment status</h2>
           </div>
         </div>
+        {emiEditSuccess ? <p className="form-message success">{emiEditSuccess}</p> : null}
         {emiStatuses.length === 0 ? (
           <EmptyState title="No EMI plans yet" message="Create a credit-card EMI plan to track current-month installment recognition." />
         ) : (
           <div className="card-list obligation-grid">
-            {emiStatuses.map((status) => (
-              <article className="account-card obligation-card" key={status.emi_plan_id}>
-                <div className="section-heading-row compact">
-                  <div>
-                    <h3>{status.name}</h3>
-                    <p>{accountName(accountsById, status.account_id)}</p>
-                  </div>
-                  <span className={emiStatusClass(status.current_month_status)}>{emiStatusLabels[status.current_month_status]}</span>
-                </div>
-                <dl className="detail-grid">
-                  <div>
-                    <dt>Monthly installment</dt>
-                    <dd>{formatMoney(status.monthly_installment)}</dd>
-                  </div>
-                  <div>
-                    <dt>Current installment</dt>
-                    <dd>{formatMoney(status.current_installment_amount)}</dd>
-                  </div>
-                  <div>
-                    <dt>Installment month</dt>
-                    <dd>{formatMonth(status.installment_month)}</dd>
-                  </div>
-                  <div>
-                    <dt>Category</dt>
-                    <dd>{categoryName(categoriesById, status.category_id)}</dd>
-                  </div>
-                  <div>
-                    <dt>Due date</dt>
-                    <dd>{formatDate(status.due_date)}</dd>
-                  </div>
-                  <div>
-                    <dt>Amount reserved this month</dt>
-                    <dd>{formatMoney(status.current_month_reserve)}</dd>
-                  </div>
-                  <div>
-                    <dt>Total unrecognized remaining</dt>
-                    <dd>{formatMoney(status.remaining_unrecognized_amount)}</dd>
-                  </div>
-                  <div>
-                    <dt>Future remaining after current installment</dt>
-                    <dd>{formatMoney(status.future_remaining_after_current_installment)}</dd>
-                  </div>
-                </dl>
-                {canRecordEmiInstallment(status.current_month_status) ? (
-                  <Link className="secondary-button card-action" href={`/transactions?emi_plan_id=${status.emi_plan_id}`}>
-                    Record installment
-                  </Link>
-                ) : null}
-              </article>
-            ))}
+            {emiStatuses.map((status) => {
+              const plan = emiPlansById.get(status.emi_plan_id);
+              const isEditing = editingEmiPlanId === status.emi_plan_id && plan !== undefined;
+              const isLocked = plan?.financial_configuration_locked ?? false;
+
+              return (
+                <article className="account-card obligation-card" key={status.emi_plan_id}>
+                  {isEditing && plan ? (
+                    <>
+                      <div className="section-heading-row compact">
+                        <div>
+                          <h3>{status.name}</h3>
+                          <p>{accountName(accountsById, status.account_id)}</p>
+                        </div>
+                        <span className={emiStatusClass(status.current_month_status)}>{emiStatusLabels[status.current_month_status]}</span>
+                      </div>
+                      <form className="form-grid single-column commitment-edit-form" onSubmit={(event) => handleEmiPlanEditSubmit(event, plan)}>
+                        {isLocked ? (
+                          <p className="helper-text">
+                            {plan.financial_configuration_lock_reason ??
+                              "EMI financial configuration is locked. Only name, due day, and active status can be changed."}
+                          </p>
+                        ) : (
+                          <p className="helper-text">Financial fields can be corrected until installment history begins or the tracking month passes.</p>
+                        )}
+                        <label>
+                          Name
+                          <input
+                            value={emiPlanEditForm.name}
+                            onChange={(event) => updateEmiPlanEditForm("name", event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Credit card
+                          <select
+                            value={emiPlanEditForm.accountId}
+                            onChange={(event) => updateEmiPlanEditForm("accountId", event.target.value)}
+                            disabled={isLocked}
+                            required
+                          >
+                            <option value="">Choose credit card</option>
+                            {emiPlanEditCardOptions.map((account) => (
+                              <option key={account.id} value={account.id}>
+                                {account.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Category
+                          <select
+                            value={emiPlanEditForm.categoryId}
+                            onChange={(event) => updateEmiPlanEditForm("categoryId", event.target.value)}
+                            disabled={isLocked}
+                            required
+                          >
+                            <option value="">Choose category</option>
+                            {categories.map((category) => (
+                              <option key={category.id} value={category.id}>
+                                {category.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Monthly installment
+                          <input
+                            inputMode="decimal"
+                            value={emiPlanEditForm.monthlyInstallment}
+                            onChange={(event) => updateEmiPlanEditForm("monthlyInstallment", event.target.value)}
+                            disabled={isLocked}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Total remaining EMI amount
+                          <input
+                            inputMode="decimal"
+                            value={emiPlanEditForm.remainingAmountAtSetup}
+                            onChange={(event) => updateEmiPlanEditForm("remainingAmountAtSetup", event.target.value)}
+                            disabled={isLocked}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Due day
+                          <input
+                            type="number"
+                            min={1}
+                            max={28}
+                            value={emiPlanEditForm.dueDay}
+                            onChange={(event) => updateEmiPlanEditForm("dueDay", event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Current month installment state
+                          <select
+                            value={emiPlanEditForm.setupCurrentMonthState}
+                            onChange={(event) =>
+                              updateEmiPlanEditForm("setupCurrentMonthState", event.target.value as EMISetupCurrentMonthState)
+                            }
+                            disabled={isLocked}
+                          >
+                            {(Object.keys(setupStateLabels) as EMISetupCurrentMonthState[]).map((state) => (
+                              <option key={state} value={state}>
+                                {setupStateLabels[state]}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={emiPlanEditForm.isActive}
+                            onChange={(event) => updateEmiPlanEditForm("isActive", event.target.checked)}
+                          />
+                          Active
+                        </label>
+                        {emiEditError ? <p className="form-message error">{emiEditError}</p> : null}
+                        <div className="form-actions button-row">
+                          <button className="primary-button" type="submit" disabled={updatingEmiPlanId === plan.id}>
+                            {updatingEmiPlanId === plan.id ? "Saving..." : "Save changes"}
+                          </button>
+                          <button className="secondary-button" type="button" onClick={cancelEmiPlanEdit}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </>
+                  ) : (
+                    <>
+                      <div className="section-heading-row compact">
+                        <div>
+                          <h3>{status.name}</h3>
+                          <p>{accountName(accountsById, status.account_id)}</p>
+                        </div>
+                        <div className="card-heading-actions">
+                          <span className={emiStatusClass(status.current_month_status)}>{emiStatusLabels[status.current_month_status]}</span>
+                          {plan ? (
+                            <button className="secondary-button" type="button" onClick={() => startEmiPlanEdit(plan)}>
+                              Edit
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      <dl className="detail-grid">
+                        <div>
+                          <dt>Monthly installment</dt>
+                          <dd>{formatMoney(status.monthly_installment)}</dd>
+                        </div>
+                        <div>
+                          <dt>Current installment</dt>
+                          <dd>{formatMoney(status.current_installment_amount)}</dd>
+                        </div>
+                        <div>
+                          <dt>Installment month</dt>
+                          <dd>{formatMonth(status.installment_month)}</dd>
+                        </div>
+                        <div>
+                          <dt>Category</dt>
+                          <dd>{categoryName(categoriesById, status.category_id)}</dd>
+                        </div>
+                        <div>
+                          <dt>Due date</dt>
+                          <dd>{formatDate(status.due_date)}</dd>
+                        </div>
+                        <div>
+                          <dt>Amount reserved this month</dt>
+                          <dd>{formatMoney(status.current_month_reserve)}</dd>
+                        </div>
+                        <div>
+                          <dt>Total unrecognized remaining</dt>
+                          <dd>{formatMoney(status.remaining_unrecognized_amount)}</dd>
+                        </div>
+                        <div>
+                          <dt>Future remaining after current installment</dt>
+                          <dd>{formatMoney(status.future_remaining_after_current_installment)}</dd>
+                        </div>
+                        <div>
+                          <dt>Plan status</dt>
+                          <dd>{status.is_active ? "Active" : "Inactive"}</dd>
+                        </div>
+                      </dl>
+                      {status.is_active && canRecordEmiInstallment(status.current_month_status) ? (
+                        <Link className="secondary-button card-action" href={`/transactions?emi_plan_id=${status.emi_plan_id}`}>
+                          Record installment
+                        </Link>
+                      ) : null}
+                    </>
+                  )}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

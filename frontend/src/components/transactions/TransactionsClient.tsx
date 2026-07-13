@@ -245,7 +245,12 @@ export function TransactionsClient() {
     }
     return activeAccounts;
   }, [activeAccounts, form.transactionType, nonCreditAccounts]);
-  const destinationOptions = activeAccounts;
+  const destinationOptions = useMemo(() => {
+    if (form.transactionType === "income") {
+      return nonCreditAccounts;
+    }
+    return activeAccounts;
+  }, [activeAccounts, form.transactionType, nonCreditAccounts]);
 
   const accountsById = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts]);
   const categoriesById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
@@ -375,15 +380,23 @@ export function TransactionsClient() {
 
   function handleTypeChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextType = event.target.value as TransactionType;
-    setForm((current) => ({
-      ...current,
-      transactionType: nextType,
-      sourceAccountId: nextType === "income" || nextType === "refund" ? "" : current.sourceAccountId,
-      destinationAccountId: nextType === "expense" || nextType === "investment" ? "" : current.destinationAccountId,
-      categoryId: nextType === "transfer" || nextType === "income" || nextType === "refund" ? "" : current.categoryId,
-      recurringCommitmentId: "",
-      emiPlanId: "",
-    }));
+    setForm((current) => {
+      const currentDestination = current.destinationAccountId ? accountsById.get(current.destinationAccountId) : undefined;
+      const shouldClearDestination =
+        nextType === "expense" ||
+        nextType === "investment" ||
+        (nextType === "income" && currentDestination?.account_type === "credit_card");
+
+      return {
+        ...current,
+        transactionType: nextType,
+        sourceAccountId: nextType === "income" || nextType === "refund" ? "" : current.sourceAccountId,
+        destinationAccountId: shouldClearDestination ? "" : current.destinationAccountId,
+        categoryId: nextType === "transfer" || nextType === "income" || nextType === "refund" ? "" : current.categoryId,
+        recurringCommitmentId: "",
+        emiPlanId: "",
+      };
+    });
     setSubmitError(null);
     setSubmitSuccess(null);
     setPrefillNotice(null);
